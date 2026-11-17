@@ -4,12 +4,34 @@ import { useMentorship } from '../../context/MentorshipContext';
 import {
   calculatePositionSizing,
   calculateRealizedTradeMetrics,
+  evaluatePlannedSetupPrediction,
+  formatAccountTypeLabel,
   formatCurrency,
+  formatPlainCurrency,
   INSTRUMENT_SPECS,
+  MISTAKE_TAG_OPTIONS,
+  SETUP_GRADE_OPTIONS,
   STRATEGY_OPTIONS,
+  TIMEFRAME_OPTIONS,
 } from '../../lib/forexCalculations';
 import { saveTradeRecord } from '../../services/mentorshipService';
-import type { TradeDirection, TradeRecord, TradeSession, TradeStatus } from '../../types/domain';
+import type {
+  EmotionalState,
+  TradeDirection,
+  TradeRecord,
+  TradeSession,
+  TradeStatus,
+} from '../../types/domain';
+
+const TRADE_EMOTIONS: EmotionalState[] = [
+  'calm',
+  'focused',
+  'anxious',
+  'frustrated',
+  'overconfident',
+  'hesitant',
+  'fatigued',
+];
 
 interface Props {
   open: boolean;
@@ -27,7 +49,12 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
   const [direction, setDirection] = useState<TradeDirection>('BUY');
   const [status, setStatus] = useState<TradeStatus>('closed');
   const [session, setSession] = useState<TradeSession>('London');
+  const [timeframe, setTimeframe] = useState('H1');
   const [strategy, setStrategy] = useState(STRATEGY_OPTIONS[0]);
+  const [setupGrade, setSetupGrade] = useState<'A+' | 'A' | 'B' | 'C' | ''>('A');
+  const [emotionTag, setEmotionTag] = useState<EmotionalState | ''>('calm');
+  const [mistakeTags, setMistakeTags] = useState<string[]>([]);
+  const [partialCloseNotes, setPartialCloseNotes] = useState('');
   const [marketCondition, setMarketCondition] = useState('');
   const [entryPrice, setEntryPrice] = useState('');
   const [stopLoss, setStopLoss] = useState('');
@@ -59,7 +86,12 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
       setDirection(existingTrade.direction);
       setStatus(existingTrade.status);
       setSession(existingTrade.session);
+      setTimeframe(existingTrade.timeframe || 'H1');
       setStrategy(existingTrade.strategy);
+      setSetupGrade(existingTrade.setupGrade || '');
+      setEmotionTag(existingTrade.emotionTag || '');
+      setMistakeTags(existingTrade.mistakeTags || []);
+      setPartialCloseNotes(existingTrade.partialCloseNotes || '');
       setMarketCondition(existingTrade.marketCondition || 'Trending');
       setEntryPrice(String(existingTrade.entryPrice));
       setStopLoss(String(existingTrade.stopLoss));
@@ -86,7 +118,12 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
       setDirection('BUY');
       setStatus('closed');
       setSession('London');
+      setTimeframe('H1');
       setStrategy(STRATEGY_OPTIONS[0]);
+      setSetupGrade('A');
+      setEmotionTag('calm');
+      setMistakeTags([]);
+      setPartialCloseNotes('');
       setMarketCondition('');
       setEntryPrice('');
       setStopLoss('');
@@ -127,8 +164,19 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
         stopLoss: Number(stopLoss) || 0,
         takeProfit: takeProfit ? Number(takeProfit) : undefined,
         lotSizeOverride: Number(lotSize) || undefined,
+        accountType: selectedAccount?.accountType,
       }),
-    [instrument, direction, accountBalance, plannedRiskPercent, entryPrice, stopLoss, takeProfit, lotSize]
+    [
+      instrument,
+      direction,
+      accountBalance,
+      plannedRiskPercent,
+      entryPrice,
+      stopLoss,
+      takeProfit,
+      lotSize,
+      selectedAccount?.accountType,
+    ]
   );
 
   const realizedPreview = useMemo(
@@ -145,6 +193,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
         commission: Number(commission) || 0,
         swap: Number(swap) || 0,
         grossPnlOverride: grossPnlOverride !== '' ? Number(grossPnlOverride) : undefined,
+        accountType: selectedAccount?.accountType,
       }),
     [
       instrument,
@@ -158,7 +207,24 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
       commission,
       swap,
       grossPnlOverride,
+      selectedAccount?.accountType,
     ]
+  );
+
+  const setupPrediction = useMemo(
+    () =>
+      evaluatePlannedSetupPrediction({
+        trades,
+        instrument,
+        direction,
+        session,
+        timeframe,
+        strategy,
+        emotionTag: emotionTag || undefined,
+        plannedRiskPercent: Number(plannedRiskPercent) || 0,
+        riskPolicy,
+      }),
+    [trades, instrument, direction, session, timeframe, strategy, emotionTag, plannedRiskPercent, riskPolicy]
   );
 
   const riskWarning =
@@ -166,6 +232,12 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
     (sizing.actualRiskPercent !== null && sizing.actualRiskPercent > riskPolicy.maxRiskPerTradePercent);
 
   if (!open) return null;
+
+  const toggleMistakeTag = (tag: string) => {
+    setMistakeTags((prev) =>
+      prev.includes(tag) ? prev.filter((item) => item !== tag) : prev.length < 10 ? [...prev, tag] : prev
+    );
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -212,7 +284,12 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
           swap: Number(swap) || 0,
           grossPnlOverride: grossPnlOverride !== '' ? Number(grossPnlOverride) : undefined,
           session,
+          timeframe: timeframe || undefined,
           strategy,
+          setupGrade: setupGrade || undefined,
+          emotionTag: emotionTag || undefined,
+          mistakeTags,
+          partialCloseNotes: partialCloseNotes.trim() || undefined,
           marketCondition,
           status,
           openedAt: new Date(openedAt).toISOString(),
@@ -273,34 +350,34 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
             </div>
           )}
 
-          {/* Account, Cycle, Instrument, Direction, Status */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          {/* Account, Instrument, Direction, Status, Cycle */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1.5">
                 Trading Account
               </label>
               <select
                 value={accountId}
                 onChange={(e) => setAccountId(e.target.value)}
                 disabled={Boolean(existingTrade)}
-                className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+                className="w-full px-3.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
               >
                 {tradingAccounts.map((acc) => (
                   <option key={acc.id} value={acc.id}>
-                    {acc.name} (${acc.currentBalance.toLocaleString()})
+                    {acc.name} · {formatAccountTypeLabel(acc.accountType)} ({formatPlainCurrency(acc.currentBalance, acc.currency)})
                   </option>
                 ))}
               </select>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1.5">
                 Instrument
               </label>
               <select
                 value={instrument}
                 onChange={(e) => setInstrument(e.target.value)}
-                className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+                className="w-full px-3.5 py-2 text-xs font-mono rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
               >
                 {Object.keys(INSTRUMENT_SPECS).map((sym) => (
                   <option key={sym} value={sym}>
@@ -311,7 +388,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1.5">
                 Direction
               </label>
               <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-slate-100 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800">
@@ -320,7 +397,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
                     key={dir}
                     type="button"
                     onClick={() => setDirection(dir)}
-                    className={`py-1 text-xs font-semibold rounded-md transition-colors ${
+                    className={`py-1.5 text-xs font-semibold rounded-md transition-colors ${
                       direction === dir
                         ? dir === 'BUY'
                           ? 'bg-emerald-600 text-white'
@@ -335,13 +412,13 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1.5">
                 Status
               </label>
               <select
                 value={status}
                 onChange={(e) => setStatus(e.target.value as TradeStatus)}
-                className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+                className="w-full px-3.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
               >
                 <option value="planned">Planned</option>
                 <option value="open">Open</option>
@@ -350,14 +427,14 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
               </select>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1">
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-slate-600 dark:text-slate-300 mb-1.5">
                 Challenge Cycle
               </label>
               <select
                 value={challengeCycleId}
                 onChange={(e) => setChallengeCycleId(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+                className="w-full px-3.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
               >
                 <option value="">None / General</option>
                 {challengeCycles.map((cyc) => (
@@ -370,7 +447,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
           </div>
 
           {/* Prices, Risk, Lot Size */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1.5">Entry Price *</label>
               <input
@@ -380,7 +457,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
                 value={entryPrice}
                 onChange={(e) => setEntryPrice(e.target.value)}
                 placeholder="0.00000"
-                className="w-full px-3 py-2 text-xs font-mono tabular-nums rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+                className="w-full px-3.5 py-2 text-xs font-mono tabular-nums rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
               />
             </div>
             <div>
@@ -392,7 +469,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
                 value={stopLoss}
                 onChange={(e) => setStopLoss(e.target.value)}
                 placeholder="0.00000"
-                className="w-full px-3 py-2 text-xs font-mono tabular-nums rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+                className="w-full px-3.5 py-2 text-xs font-mono tabular-nums rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
               />
             </div>
             <div>
@@ -403,7 +480,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
                 value={takeProfit}
                 onChange={(e) => setTakeProfit(e.target.value)}
                 placeholder="Optional"
-                className="w-full px-3 py-2 text-xs font-mono tabular-nums rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+                className="w-full px-3.5 py-2 text-xs font-mono tabular-nums rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
               />
             </div>
             <div>
@@ -416,7 +493,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
                 value={exitPrice}
                 onChange={(e) => setExitPrice(e.target.value)}
                 placeholder="0.00000"
-                className="w-full px-3 py-2 text-xs font-mono tabular-nums rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+                className="w-full px-3.5 py-2 text-xs font-mono tabular-nums rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
               />
             </div>
             <div>
@@ -429,7 +506,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
                 required
                 value={plannedRiskPercent}
                 onChange={(e) => setPlannedRiskPercent(e.target.value)}
-                className="w-full px-3 py-2 text-xs font-mono tabular-nums rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+                className="w-full px-3.5 py-2 text-xs font-mono tabular-nums rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
               />
             </div>
             <div>
@@ -439,7 +516,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
                   <button
                     type="button"
                     onClick={() => setLotSize(String(sizing.recommendedLotSize))}
-                    className="text-[11px] text-blue-500 hover:underline font-mono"
+                    className="text-xs text-blue-500 hover:underline font-mono"
                   >
                     Use {sizing.recommendedLotSize}
                   </button>
@@ -453,13 +530,13 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
                 value={lotSize}
                 onChange={(e) => setLotSize(e.target.value)}
                 placeholder="0.00"
-                className="w-full px-3 py-2 text-xs font-mono tabular-nums rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+                className="w-full px-3.5 py-2 text-xs font-mono tabular-nums rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
               />
             </div>
           </div>
 
           {/* Live Automated Calculation Strip */}
-          <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+          <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div>
               <div className="text-slate-500 flex items-center gap-1">
                 <Calculator className="w-3.5 h-3.5" />
@@ -467,6 +544,18 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
               </div>
               <div className="font-mono font-semibold tabular-nums text-slate-900 dark:text-white mt-0.5">
                 {sizing.stopLossPips !== null ? `${sizing.stopLossPips} pips` : 'Incomplete'}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-500">TP Distance</div>
+              <div className="font-mono font-semibold tabular-nums text-slate-900 dark:text-white mt-0.5">
+                {sizing.takeProfitPips !== null ? `${sizing.takeProfitPips} pips` : '—'}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-500">Pip Value (1.00 lot)</div>
+              <div className="font-mono font-semibold tabular-nums text-slate-900 dark:text-white mt-0.5">
+                {sizing.pipValuePerLot !== null ? `$${sizing.pipValuePerLot.toFixed(2)}/pip` : '—'}
               </div>
             </div>
             <div>
@@ -481,6 +570,12 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
               <div className="text-slate-500">Planned R:R</div>
               <div className="font-mono font-semibold tabular-nums text-slate-900 dark:text-white mt-0.5">
                 {sizing.riskRewardRatio !== null ? `1 : ${sizing.riskRewardRatio}` : '—'}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-500">Projected Reward</div>
+              <div className="font-mono font-semibold tabular-nums text-emerald-500 mt-0.5">
+                {sizing.projectedRewardAmount !== null ? formatCurrency(sizing.projectedRewardAmount) : '—'}
               </div>
             </div>
             <div>
@@ -505,7 +600,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
             </div>
           </div>
 
-          {/* Session, Strategy, Market Condition, Timestamps, Commission/Swap */}
+          {/* Session, Timeframe, Strategy, Setup Grade, Emotion, Timestamps, Commission/Swap */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
               <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Trading Session</label>
@@ -522,6 +617,20 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
               </select>
             </div>
             <div>
+              <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Chart Timeframe</label>
+              <select
+                value={timeframe}
+                onChange={(e) => setTimeframe(e.target.value)}
+                className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+              >
+                {TIMEFRAME_OPTIONS.map((tf) => (
+                  <option key={tf} value={tf}>
+                    {tf}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
               <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Trading Strategy</label>
               <select
                 value={strategy}
@@ -531,6 +640,36 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
                 {STRATEGY_OPTIONS.map((s) => (
                   <option key={s} value={s}>
                     {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Setup Grade</label>
+              <select
+                value={setupGrade}
+                onChange={(e) => setSetupGrade(e.target.value as 'A+' | 'A' | 'B' | 'C' | '')}
+                className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+              >
+                <option value="">Unspecified</option>
+                {SETUP_GRADE_OPTIONS.map((g) => (
+                  <option key={g} value={g}>
+                    Grade {g}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Execution Emotion</label>
+              <select
+                value={emotionTag}
+                onChange={(e) => setEmotionTag(e.target.value as EmotionalState | '')}
+                className="w-full px-3 py-2 text-xs capitalize rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+              >
+                <option value="">Unspecified</option>
+                {TRADE_EMOTIONS.map((em) => (
+                  <option key={em} value={em}>
+                    {em}
                   </option>
                 ))}
               </select>
@@ -602,6 +741,81 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
                 </div>
               </>
             )}
+          </div>
+
+          {/* Live Historical Record Reader & Setup Prediction Guidance */}
+          <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 space-y-2 text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold text-slate-900 dark:text-white">
+                Setup Prediction from Your Manual Records
+              </span>
+              <span
+                className={`font-semibold ${
+                  setupPrediction.verdict === 'Favorable Setup'
+                    ? 'text-emerald-500'
+                    : setupPrediction.verdict === 'Caution Advised'
+                    ? 'text-amber-500'
+                    : 'text-blue-500'
+                }`}
+              >
+                {setupPrediction.verdict}
+                {setupPrediction.predictedWinRate !== null
+                  ? ` · ${setupPrediction.predictedWinRate}% Hist. Win Rate`
+                  : ''}
+                {setupPrediction.expectedRMultiple !== null
+                  ? ` · ${setupPrediction.expectedRMultiple}R Avg`
+                  : ''}
+              </span>
+            </div>
+            <div className="text-slate-500 dark:text-slate-400">
+              Basis: {setupPrediction.matchScopeLabel}
+            </div>
+            <ul className="space-y-1 text-slate-600 dark:text-slate-300">
+              {setupPrediction.notes.map((n, idx) => (
+                <li key={idx}>· {n}</li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Mistake Tagging & Partial Close Notes */}
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1.5">
+                Execution Mistakes (Optional — select any that occurred)
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {MISTAKE_TAG_OPTIONS.map((tag) => {
+                  const active = mistakeTags.includes(tag);
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => toggleMistakeTag(tag)}
+                      className={`px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors ${
+                        active
+                          ? 'bg-amber-500/15 border-amber-500/40 text-amber-500'
+                          : 'bg-slate-50 dark:bg-[#0B111E] border-slate-200 dark:border-slate-800 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                      }`}
+                    >
+                      {tag}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">
+                Partial Close / Trade Management Notes (Optional)
+              </label>
+              <input
+                type="text"
+                value={partialCloseNotes}
+                onChange={(e) => setPartialCloseNotes(e.target.value)}
+                placeholder="e.g. Closed 50% at +1.5R, moved SL to breakeven..."
+                className="w-full px-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+              />
+            </div>
           </div>
 
           {/* Journal Reasoning & Discipline */}

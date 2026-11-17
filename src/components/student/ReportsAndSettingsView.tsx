@@ -139,40 +139,85 @@ export const ReportsAndSettingsView: React.FC<{ initialTab?: 'reports' | 'settin
 
       {tab === 'reports' && (
         <div className="space-y-6">
-          <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                Generate Personal Performance Report
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Includes capital-adjusted growth, R-multiples, drawdown, 5-pillar score, and closed trades.
-              </p>
+          <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                  Generate Personal Performance Report
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Includes capital-adjusted growth, R-multiples, current & max drawdown, 30-day comparisons, 5-pillar score, and closed trades.
+                </p>
+              </div>
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => exportTradesToCsv(trades, 'personal-trading-journal.csv')}
+                  disabled={trades.length === 0}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Export Trades CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    exportPerformanceReportPdf({
+                      studentName: studentProfile?.fullName || 'Student',
+                      periodLabel: 'Cumulative Portfolio Report',
+                      metrics,
+                      trades: trades.filter((t) => t.status === 'closed'),
+                    })
+                  }
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  Download PDF Report
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-2.5">
-              <button
-                type="button"
-                onClick={() => exportTradesToCsv(trades, 'personal-trading-journal.csv')}
-                disabled={trades.length === 0}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
-              >
-                <Download className="w-3.5 h-3.5" />
-                Export Trades CSV
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  exportPerformanceReportPdf({
-                    studentName: studentProfile?.fullName || 'Student',
-                    periodLabel: 'Cumulative Portfolio Report',
-                    metrics,
-                    trades: trades.filter((t) => t.status === 'closed'),
-                  })
-                }
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                <FileText className="w-3.5 h-3.5" />
-                Download PDF Report
-              </button>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 lg:divide-x divide-slate-200 dark:divide-slate-800 pt-4 border-t border-slate-200 dark:border-slate-800 text-xs">
+              <div className="py-3 sm:pr-5 space-y-1">
+                <div className="text-slate-500">Last 30 Days Net P/L</div>
+                <div
+                  className={`text-base font-mono font-bold tabular-nums ${
+                    metrics.periodComparison.current30d.netPnl >= 0 ? 'text-emerald-500' : 'text-red-500'
+                  }`}
+                >
+                  {formatCurrency(metrics.periodComparison.current30d.netPnl)}
+                </div>
+                <div className="text-xs font-mono text-slate-400">
+                  Prior 30d: {formatCurrency(metrics.periodComparison.prior30d.netPnl)}
+                </div>
+              </div>
+              <div className="py-3 sm:px-5 space-y-1">
+                <div className="text-slate-500">This Month Win Rate</div>
+                <div className="text-base font-mono font-bold tabular-nums text-slate-900 dark:text-white">
+                  {metrics.periodComparison.thisMonth.winRate}%
+                </div>
+                <div className="text-xs font-mono text-slate-400">
+                  Last Month: {metrics.periodComparison.lastMonth.winRate}%
+                </div>
+              </div>
+              <div className="py-3 sm:pr-5 lg:px-5 space-y-1">
+                <div className="text-slate-500">Max / Current Drawdown</div>
+                <div className="text-base font-mono font-bold tabular-nums text-slate-900 dark:text-white">
+                  {metrics.maxDrawdownPercent}% / {metrics.currentDrawdownPercent}%
+                </div>
+                <div className="text-xs font-mono text-slate-400">
+                  Compliance: {metrics.riskComplianceRate}%
+                </div>
+              </div>
+              <div className="py-3 sm:pl-5 space-y-1">
+                <div className="text-slate-500">Overall 5-Pillar Score</div>
+                <div className="text-base font-mono font-bold tabular-nums text-blue-500">
+                  {metrics.scores.overall.toFixed(0)} / 100
+                </div>
+                <div className="text-xs font-mono text-slate-400">
+                  Journal: {metrics.scores.journalCompletion}%
+                </div>
+              </div>
             </div>
           </div>
 
@@ -222,7 +267,7 @@ export const ReportsAndSettingsView: React.FC<{ initialTab?: 'reports' | 'settin
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 font-mono">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 font-mono">
                       <div>Trades: {rep.totalTrades}</div>
                       <div>Win Rate: {rep.winRate}%</div>
                       <div>Net P/L: {formatCurrency(rep.netPnl)}</div>

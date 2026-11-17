@@ -1,8 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Activity,
   ArrowDownLeft,
   ArrowUpRight,
+  BrainCircuit,
   Calendar,
+  ChevronLeft,
+  ChevronRight,
+  GitCompare,
   Plus,
   Wallet,
 } from 'lucide-react';
@@ -19,29 +24,65 @@ import {
   YAxis,
 } from 'recharts';
 import { useMentorship } from '../../context/MentorshipContext';
+import { auth } from '../../lib/firebase';
 import { formatFirestoreDate } from '../../lib/firestore-helpers';
-import { formatCurrency, formatPlainCurrency } from '../../lib/forexCalculations';
+import {
+  ACCOUNT_TYPE_SPECS,
+  computeManualRecordInsights,
+  formatAccountTypeLabel,
+  formatCurrency,
+  formatPlainCurrency,
+  getMinimumInitialBalance,
+  type PeriodSummary,
+} from '../../lib/forexCalculations';
 import { createTradingAccount, recordAccountTransaction } from '../../services/mentorshipService';
 import type { TradingAccount } from '../../types/domain';
+
+interface AiPatternReport {
+  summary: string;
+  predictions?: {
+    nextTradeOutlook: string;
+    recommendedSetupFocus: string;
+    projectedWinRateRange: string;
+    riskWatchTrigger: string;
+    recordQualityFeedback: string;
+  };
+  strengths: string[];
+  patterns: Array<{
+    title: string;
+    category: 'execution' | 'risk' | 'timing' | 'psychology' | 'strategy';
+    severity: 'positive' | 'caution' | 'critical';
+    evidence: string;
+    recommendation: string;
+  }>;
+  psychologyInsights: string[];
+  actionPlan: string[];
+}
 
 export const AnalyticsView: React.FC = () => {
   const {
     firebaseUser,
+    studentProfile,
     tradingAccounts,
     activeAccount,
     transactions,
     trades,
+    psychologyAssessments,
+    riskViolations,
+    riskPolicy,
     metrics,
     theme,
   } = useMentorship();
 
-  const [tab, setTab] = useState<'performance' | 'accounts' | 'calendar'>('performance');
+  const [tab, setTab] = useState<'performance' | 'accounts' | 'calendar' | 'ai'>('performance');
+  const [comparisonMode, setComparisonMode] = useState<'30d' | 'month'>('30d');
   const [showNewAccount, setShowNewAccount] = useState(false);
   const [accName, setAccName] = useState('');
-  const [accType, setAccType] = useState<TradingAccount['accountType']>('demo');
+  const [accType, setAccType] = useState<TradingAccount['accountType']>('standard');
   const [accCurrency, setAccCurrency] = useState<TradingAccount['currency']>('USD');
   const [accBalance, setAccBalance] = useState('');
   const [accBroker, setAccBroker] = useState('');
+  const [accError, setAccError] = useState<string | null>(null);
 
   const [txAccountId, setTxAccountId] = useState(activeAccount?.id || tradingAccounts[0]?.id || '');
   const [txType, setTxType] = useState<'deposit' | 'withdrawal'>('deposit');
@@ -50,28 +91,165 @@ export const AnalyticsView: React.FC = () => {
   const [txDate, setTxDate] = useState(new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
 
+  // Interactive Monthly Calendar state
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState<string>(
+    new Date().toISOString().slice(0, 10)
+  );
+
+  // AI Pattern Recognition state
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [aiReport, setAiReport] = useState<AiPatternReport | null>(null);
+  const [aiMeta, setAiMeta] = useState<{ generatedAt: string; tradesAnalyzed: number } | null>(null);
+
+  const manualInsights = useMemo(
+    () =>
+      computeManualRecordInsights({
+        trades,
+        assessments: psychologyAssessments,
+        riskPolicy,
+      }),
+    [trades, psychologyAssessments, riskPolicy]
+  );
+
   const currency = activeAccount?.currency || 'USD';
 
-  const calendarDays = useMemo(() => {
-    const map = new Map<string, { pnl: number; count: number }>();
+  const dayTradeMap = useMemo(() => {
+    const map = new Map<string, { pnl: number; count: number; wins: number; items: typeof trades }>();
     trades
-      .filter((t) => t.status === 'closed' && typeof t.netPnl === 'number')
+      .filter((t) => t.status !== 'draft')
       .forEach((t) => {
         const day = (t.closedAt || t.openedAt).slice(0, 10);
-        const cur = map.get(day) || { pnl: 0, count: 0 };
-        cur.pnl += t.netPnl ?? 0;
-        cur.count++;
+        const cur = map.get(day) || { pnl: 0, count: 0, wins: 0, items: [] };
+        if (t.status === 'closed' && typeof t.netPnl === 'number') {
+          cur.pnl += t.netPnl;
+          if (t.netPnl > 0.005) cur.wins += 1;
+        }
+        cur.count += 1;
+        cur.items.push(t);
         map.set(day, cur);
       });
-    return Array.from(map.entries())
-      .sort(([a], [b]) => b.localeCompare(a))
-      .slice(0, 35);
+    return map;
   }, [trades]);
+
+  const calendarGrid = useMemo(() => {
+    const { year, month } = calendarMonth;
+    const firstDay = new Date(year, month, 1);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    // Mon = 0 .. Sun = 6
+    const startOffset = (firstDay.getDay() + 6) % 7;
+
+    const cells: Array<{ iso: string | null; dayNum: number | null }> = [];
+    for (let i = 0; i < startOffset; i++) {
+      cells.push({ iso: null, dayNum: null });
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+      const mm = String(month + 1).padStart(2, '0');
+      const dd = String(d).padStart(2, '0');
+      cells.push({ iso: `${year}-${mm}-${dd}`, dayNum: d });
+    }
+
+    const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+    const activeMonthDays = Array.from(dayTradeMap.entries()).filter(([k]) =>
+      k.startsWith(monthPrefix)
+    );
+    const monthNetPnl = activeMonthDays.reduce((s, [, v]) => s + v.pnl, 0);
+    const bestDay = activeMonthDays.reduce<{ date: string; pnl: number } | null>(
+      (best, [date, v]) => (!best || v.pnl > best.pnl ? { date, pnl: v.pnl } : best),
+      null
+    );
+    const worstDay = activeMonthDays.reduce<{ date: string; pnl: number } | null>(
+      (worst, [date, v]) => (!worst || v.pnl < worst.pnl ? { date, pnl: v.pnl } : worst),
+      null
+    );
+
+    const monthLabel = firstDay.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    return {
+      cells,
+      monthLabel,
+      tradingDaysCount: activeMonthDays.length,
+      monthNetPnl,
+      bestDay,
+      worstDay,
+    };
+  }, [calendarMonth, dayTradeMap]);
+
+  const selectedDayTrades = useMemo(
+    () => dayTradeMap.get(selectedCalendarDate)?.items || [],
+    [dayTradeMap, selectedCalendarDate]
+  );
+
+  const nonDraftCount = useMemo(
+    () => trades.filter((t) => t.status !== 'draft').length,
+    [trades]
+  );
+
+  const handleRunAiPatternAnalysis = async () => {
+    setAiError(null);
+    if (nonDraftCount === 0) {
+      setAiError('Log at least one planned, open, or closed trade in your Trading Journal before running AI pattern analysis.');
+      return;
+    }
+    const token = await auth.currentUser?.getIdToken();
+    if (!token) {
+      setAiError('Authentication token unavailable. Please sign in again.');
+      return;
+    }
+
+    setAiLoading(true);
+    try {
+      const res = await fetch('/api/ai/pattern-recognition', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          studentName: studentProfile?.fullName || firebaseUser?.displayName || 'Trader',
+          trades,
+          assessments: psychologyAssessments,
+          violations: riskViolations,
+          metrics,
+        }),
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload?.error || `Analysis request failed (${res.status})`);
+      }
+      const analysis = (payload?.analysis ?? payload) as AiPatternReport;
+      setAiReport(analysis);
+      setAiMeta(
+        payload?.generatedAt
+          ? {
+              generatedAt: String(payload.generatedAt),
+              tradesAnalyzed: Number(payload.tradesAnalyzed || nonDraftCount),
+            }
+          : null
+      );
+    } catch (err: unknown) {
+      setAiError(err instanceof Error ? err.message : 'Unable to generate AI pattern analysis.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   const handleCreateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!firebaseUser || !accName.trim()) return;
+    const minRequired = getMinimumInitialBalance(accType);
+    const parsedBal = Number(accBalance);
+    if (!Number.isFinite(parsedBal) || parsedBal < minRequired) {
+      setAccError(
+        `${formatAccountTypeLabel(accType)} accounts require a minimum starting capital of $${minRequired}.00.`
+      );
+      return;
+    }
     setBusy(true);
+    setAccError(null);
     try {
       await createTradingAccount({
         userId: firebaseUser.uid,
@@ -79,13 +257,15 @@ export const AnalyticsView: React.FC = () => {
         currency: accCurrency,
         brokerName: accBroker.trim() || undefined,
         accountType: accType,
-        initialBalance: Number(accBalance) || 0,
+        initialBalance: parsedBal,
         isDefault: tradingAccounts.length === 0,
       });
       setAccName('');
       setAccBalance('');
       setAccBroker('');
       setShowNewAccount(false);
+    } catch (err: unknown) {
+      setAccError(err instanceof Error ? err.message : 'Unable to create trading account.');
     } finally {
       setBusy(false);
     }
@@ -112,6 +292,11 @@ export const AnalyticsView: React.FC = () => {
     }
   };
 
+  const activePeriodPair: [PeriodSummary, PeriodSummary] =
+    comparisonMode === '30d'
+      ? [metrics.periodComparison.current30d, metrics.periodComparison.prior30d]
+      : [metrics.periodComparison.thisMonth, metrics.periodComparison.lastMonth];
+
   const gridColor = theme === 'dark' ? '#1E293B' : '#E2E8F0';
   const tickColor = theme === 'dark' ? '#94A3B8' : '#64748B';
 
@@ -123,21 +308,22 @@ export const AnalyticsView: React.FC = () => {
             Performance Analytics & Capital
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Capital-adjusted returns strictly separated from deposits/withdrawals · Real database telemetry
+            Capital-adjusted returns, historical period comparisons, monthly calendar, and AI pattern analysis
           </p>
         </div>
 
-        <div className="flex items-center gap-1 p-1 rounded-lg bg-slate-200/70 dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800">
+        <div className="flex flex-wrap items-center gap-1 p-1 rounded-lg bg-slate-200/70 dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800">
           {([
             ['performance', 'Analytics'],
             ['accounts', 'Accounts & Capital'],
             ['calendar', 'Trading Calendar'],
+            ['ai', 'Patterns & Prediction'],
           ] as const).map(([id, label]) => (
             <button
               key={id}
               type="button"
               onClick={() => setTab(id)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+              className={`px-3.5 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
                 tab === id
                   ? 'bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white shadow-xs'
                   : 'text-slate-600 dark:text-slate-400'
@@ -152,7 +338,7 @@ export const AnalyticsView: React.FC = () => {
       {tab === 'performance' && (
         <>
           {/* Detailed Quantitative Scorecard */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-5">
             {[
               ['Gross Profit', formatCurrency(metrics.totalGrossProfit, currency), 'text-emerald-500'],
               ['Gross Loss', formatCurrency(-metrics.totalGrossLoss, currency), 'text-red-500'],
@@ -169,12 +355,146 @@ export const AnalyticsView: React.FC = () => {
             ].map(([label, val, tone]) => (
               <div
                 key={label}
-                className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-4"
+                className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5"
               >
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">{label}</div>
-                <div className={`text-base font-bold font-mono tabular-nums mt-1.5 ${tone}`}>{val}</div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">{label}</div>
+                <div className={`text-lg font-bold font-mono tabular-nums mt-2 ${tone}`}>{val}</div>
               </div>
             ))}
+          </div>
+
+          {/* Historical Performance Comparisons */}
+          <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <GitCompare className="w-4 h-4 text-blue-500" />
+                <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
+                  Historical Performance Comparison
+                </h2>
+              </div>
+              <div className="flex items-center gap-1 p-1 rounded-lg bg-slate-100 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setComparisonMode('30d')}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-md ${
+                    comparisonMode === '30d'
+                      ? 'bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white shadow-xs'
+                      : 'text-slate-500'
+                  }`}
+                >
+                  Last 30d vs Prior 30d
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setComparisonMode('month')}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-md ${
+                    comparisonMode === 'month'
+                      ? 'bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white shadow-xs'
+                      : 'text-slate-500'
+                  }`}
+                >
+                  This Month vs Last Month
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+              {(() => {
+                const [cur, prev] = activePeriodPair;
+                const wrDelta = Number((cur.winRate - prev.winRate).toFixed(1));
+                const pnlDelta = cur.netPnl - prev.netPnl;
+                const compDelta = Number((cur.complianceRate - prev.complianceRate).toFixed(1));
+                const pfCur = cur.profitFactor !== null ? cur.profitFactor.toFixed(2) : '—';
+                const pfPrev = prev.profitFactor !== null ? prev.profitFactor.toFixed(2) : '—';
+                const rCur = cur.avgRMultiple !== null ? `${cur.avgRMultiple.toFixed(2)}R` : '—';
+                const rPrev = prev.avgRMultiple !== null ? `${prev.avgRMultiple.toFixed(2)}R` : '—';
+
+                const items = [
+                  {
+                    label: 'Net P/L',
+                    current: formatCurrency(cur.netPnl, currency),
+                    previous: formatCurrency(prev.netPnl, currency),
+                    delta: `${pnlDelta >= 0 ? '+' : ''}${formatCurrency(pnlDelta, currency).replace(/^\+/, '')}`,
+                    positive: pnlDelta >= 0,
+                  },
+                  {
+                    label: 'Win Rate',
+                    current: `${cur.winRate}%`,
+                    previous: `${prev.winRate}%`,
+                    delta: `${wrDelta >= 0 ? '+' : ''}${wrDelta}%`,
+                    positive: wrDelta >= 0,
+                  },
+                  {
+                    label: 'Closed Trades',
+                    current: String(cur.trades),
+                    previous: String(prev.trades),
+                    delta: `${cur.trades - prev.trades >= 0 ? '+' : ''}${cur.trades - prev.trades}`,
+                    positive: true,
+                  },
+                  {
+                    label: 'Profit Factor',
+                    current: pfCur,
+                    previous: pfPrev,
+                    delta:
+                      cur.profitFactor !== null && prev.profitFactor !== null
+                        ? `${cur.profitFactor - prev.profitFactor >= 0 ? '+' : ''}${(cur.profitFactor - prev.profitFactor).toFixed(2)}`
+                        : '—',
+                    positive:
+                      cur.profitFactor !== null && prev.profitFactor !== null
+                        ? cur.profitFactor >= prev.profitFactor
+                        : true,
+                  },
+                  {
+                    label: 'Avg R-Multiple',
+                    current: rCur,
+                    previous: rPrev,
+                    delta:
+                      cur.avgRMultiple !== null && prev.avgRMultiple !== null
+                        ? `${cur.avgRMultiple - prev.avgRMultiple >= 0 ? '+' : ''}${(cur.avgRMultiple - prev.avgRMultiple).toFixed(2)}R`
+                        : '—',
+                    positive:
+                      cur.avgRMultiple !== null && prev.avgRMultiple !== null
+                        ? cur.avgRMultiple >= prev.avgRMultiple
+                        : true,
+                  },
+                  {
+                    label: 'Risk Compliance',
+                    current: `${cur.complianceRate}%`,
+                    previous: `${prev.complianceRate}%`,
+                    delta: `${compDelta >= 0 ? '+' : ''}${compDelta}%`,
+                    positive: compDelta >= 0,
+                  },
+                ];
+
+                return items.map((item) => (
+                  <div
+                    key={item.label}
+                    className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 space-y-1.5"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-slate-500">{item.label}</span>
+                      <span
+                        className={`text-xs font-mono font-semibold ${
+                          item.delta === '—'
+                            ? 'text-slate-400'
+                            : item.positive
+                            ? 'text-emerald-500'
+                            : 'text-red-500'
+                        }`}
+                      >
+                        {item.delta}
+                      </span>
+                    </div>
+                    <div className="text-base font-bold font-mono tabular-nums text-slate-900 dark:text-white">
+                      {item.current}
+                    </div>
+                    <div className="text-xs font-mono text-slate-500">
+                      {prev.label}: {item.previous}
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
           </div>
 
           {/* Equity Curve & Drawdown Charts */}
@@ -324,6 +644,116 @@ export const AnalyticsView: React.FC = () => {
               )}
             </div>
           </div>
+
+          {/* Session, Day-of-Week & Timeframe Performance Breakdowns */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6">
+              <h2 className="text-sm font-semibold text-slate-900 dark:text-white mb-4">
+                Trading Session & Timeframe Edge
+              </h2>
+              {metrics.sessionBreakdown.length === 0 ? (
+                <p className="text-xs text-slate-500 py-10 text-center">
+                  Close trades to identify your highest-expectancy trading sessions.
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500">
+                          <th className="pb-2">Session</th>
+                          <th className="pb-2 text-right">Trades</th>
+                          <th className="pb-2 text-right">Win Rate</th>
+                          <th className="pb-2 text-right">Avg R</th>
+                          <th className="pb-2 text-right">Net P/L</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                        {metrics.sessionBreakdown.map((ses) => (
+                          <tr key={ses.session}>
+                            <td className="py-2 font-medium text-slate-800 dark:text-slate-200">
+                              {ses.session}
+                            </td>
+                            <td className="py-2 text-right font-mono tabular-nums">{ses.trades}</td>
+                            <td className="py-2 text-right font-mono tabular-nums">{ses.winRate}%</td>
+                            <td className="py-2 text-right font-mono tabular-nums">
+                              {ses.avgRMultiple !== null ? `${ses.avgRMultiple}R` : '—'}
+                            </td>
+                            <td
+                              className={`py-2 text-right font-mono tabular-nums font-semibold ${
+                                ses.netPnl >= 0 ? 'text-emerald-500' : 'text-red-500'
+                              }`}
+                            >
+                              {formatCurrency(ses.netPnl, currency)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {metrics.timeframeBreakdown.length > 0 && (
+                    <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
+                      <div className="text-xs font-medium text-slate-500 mb-2.5">By Entry Timeframe</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                        {metrics.timeframeBreakdown.map((tf) => (
+                          <div
+                            key={tf.timeframe}
+                            className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2"
+                          >
+                            <div>
+                              <div className="font-mono font-semibold text-slate-900 dark:text-white">
+                                {tf.timeframe}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                {tf.trades} · {tf.winRate}% WR
+                              </div>
+                            </div>
+                            <span
+                              className={`font-mono font-semibold tabular-nums ${
+                                tf.netPnl >= 0 ? 'text-emerald-500' : 'text-red-500'
+                              }`}
+                            >
+                              {formatCurrency(tf.netPnl, currency)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6">
+              <h2 className="text-sm font-semibold text-slate-900 dark:text-white mb-3">
+                Day-of-Week Net P/L Distribution
+              </h2>
+              <div className="h-56">
+                {metrics.dayOfWeekBreakdown.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={metrics.dayOfWeekBreakdown}>
+                      <CartesianGrid stroke={gridColor} strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="day" tick={{ fontSize: 11, fill: tickColor }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 10, fill: tickColor }} axisLine={false} tickLine={false} width={54} />
+                      <Tooltip
+                        formatter={(v: unknown) => [formatCurrency(Number(v), currency), 'Net P/L']}
+                      />
+                      <Bar dataKey="netPnl" radius={[4, 4, 0, 0]}>
+                        {metrics.dayOfWeekBreakdown.map((entry, idx) => (
+                          <Cell key={idx} fill={entry.netPnl >= 0 ? '#10B981' : '#EF4444'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-xs text-slate-500">
+                    No closed trade weekday distribution available yet.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </>
       )}
 
@@ -380,24 +810,34 @@ export const AnalyticsView: React.FC = () => {
                   onSubmit={handleCreateAccount}
                   className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 space-y-3"
                 >
+                  {accError && (
+                    <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-500">
+                      {accError}
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-3">
                     <input
                       type="text"
                       required
                       value={accName}
                       onChange={(e) => setAccName(e.target.value)}
-                      placeholder="Account label (e.g. Prop Phase 1)"
+                      placeholder="Account label (e.g. Cent Growth or Prop Phase 1)"
                       className="col-span-2 px-3 py-2 text-xs rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
                     />
                     <select
                       value={accType}
-                      onChange={(e) => setAccType(e.target.value as TradingAccount['accountType'])}
+                      onChange={(e) => {
+                        setAccType(e.target.value as TradingAccount['accountType']);
+                        setAccError(null);
+                      }}
                       className="px-3 py-2 text-xs rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
                     >
-                      <option value="demo">Demo</option>
-                      <option value="live">Live Personal</option>
-                      <option value="prop_challenge">Prop Challenge</option>
-                      <option value="funded">Funded</option>
+                      <option value="standard">Standard Account (Min $50)</option>
+                      <option value="cent">Cent Account (Min $10)</option>
+                      <option value="demo">Demo Practice (Min $10)</option>
+                      <option value="live">Live Standard (Min $50)</option>
+                      <option value="prop_challenge">Prop Challenge (Min $50)</option>
+                      <option value="funded">Funded (Min $50)</option>
                     </select>
                     <select
                       value={accCurrency}
@@ -410,12 +850,12 @@ export const AnalyticsView: React.FC = () => {
                     </select>
                     <input
                       type="number"
-                      min="0"
+                      min={getMinimumInitialBalance(accType)}
                       step="0.01"
                       required
                       value={accBalance}
                       onChange={(e) => setAccBalance(e.target.value)}
-                      placeholder="Initial balance"
+                      placeholder={`Starting balance (Min $${getMinimumInitialBalance(accType)})`}
                       className="px-3 py-2 text-xs font-mono rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
                     />
                     <input
@@ -426,28 +866,31 @@ export const AnalyticsView: React.FC = () => {
                       className="px-3 py-2 text-xs rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
                     />
                   </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    {ACCOUNT_TYPE_SPECS[accType].description}
+                  </p>
                   <button
                     type="submit"
                     disabled={busy}
-                    className="w-full py-2 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                    className="w-full py-2 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
                   >
                     Create Account
                   </button>
                 </form>
               )}
 
-              <div className="space-y-2.5">
+              <div className="divide-y divide-slate-200 dark:divide-slate-800 border-t border-slate-200 dark:border-slate-800">
                 {tradingAccounts.map((acc) => (
                   <div
                     key={acc.id}
-                    className="p-3.5 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 flex items-center justify-between"
+                    className="py-3 flex items-center justify-between"
                   >
                     <div>
                       <div className="text-sm font-semibold text-slate-900 dark:text-white">
                         {acc.name}
                       </div>
                       <div className="text-xs text-slate-500">
-                        {acc.accountType.replace('_', ' ')} · {acc.currency}
+                        {formatAccountTypeLabel(acc.accountType)} · {acc.currency}
                         {acc.brokerName ? ` · ${acc.brokerName}` : ''}
                       </div>
                     </div>
@@ -562,46 +1005,450 @@ export const AnalyticsView: React.FC = () => {
       )}
 
       {tab === 'calendar' && (
-        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-xl p-5 md:p-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-blue-500" />
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-              Daily Trading Activity Calendar
-            </h2>
-          </div>
+        <div className="space-y-5">
+          <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-xl p-5 md:p-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-blue-500" />
+                <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                  Monthly Trading Calendar · {calendarGrid.monthLabel}
+                </h2>
+              </div>
 
-          {calendarDays.length === 0 ? (
-            <p className="text-xs text-slate-500 py-10 text-center">
-              Close trades to populate your daily profit/loss calendar.
-            </p>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-2.5">
-              {calendarDays.map(([date, info]) => (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setCalendarMonth((prev) =>
+                      prev.month === 0
+                        ? { year: prev.year - 1, month: 11 }
+                        : { year: prev.year, month: prev.month - 1 }
+                    )
+                  }
+                  className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                  aria-label="Previous month"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const now = new Date();
+                    setCalendarMonth({ year: now.getFullYear(), month: now.getMonth() });
+                    setSelectedCalendarDate(now.toISOString().slice(0, 10));
+                  }}
+                  className="px-2.5 py-1 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setCalendarMonth((prev) =>
+                      prev.month === 11
+                        ? { year: prev.year + 1, month: 0 }
+                        : { year: prev.year, month: prev.month + 1 }
+                    )
+                  }
+                  className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                  aria-label="Next month"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800">
+                <div className="text-slate-500">Monthly Net P/L</div>
                 <div
-                  key={date}
-                  className={`p-3 rounded-lg border text-xs ${
-                    info.pnl > 0
-                      ? 'bg-emerald-500/10 border-emerald-500/25'
-                      : info.pnl < 0
-                      ? 'bg-red-500/10 border-red-500/25'
-                      : 'bg-slate-50 dark:bg-[#0B111E] border-slate-200 dark:border-slate-800'
+                  className={`font-mono font-bold mt-0.5 ${
+                    calendarGrid.monthNetPnl >= 0 ? 'text-emerald-500' : 'text-red-500'
                   }`}
                 >
-                  <div className="font-mono text-[11px] text-slate-500 dark:text-slate-400">
-                    {date}
+                  {formatCurrency(calendarGrid.monthNetPnl, currency)}
+                </div>
+              </div>
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800">
+                <div className="text-slate-500">Active Trading Days</div>
+                <div className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                  {calendarGrid.tradingDaysCount}
+                </div>
+              </div>
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800">
+                <div className="text-slate-500">Best Session Day</div>
+                <div className="font-mono font-bold text-emerald-500 mt-0.5">
+                  {calendarGrid.bestDay
+                    ? `${formatCurrency(calendarGrid.bestDay.pnl, currency)} (${calendarGrid.bestDay.date.slice(5)})`
+                    : '—'}
+                </div>
+              </div>
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800">
+                <div className="text-slate-500">Weakest Session Day</div>
+                <div className="font-mono font-bold text-red-500 mt-0.5">
+                  {calendarGrid.worstDay
+                    ? `${formatCurrency(calendarGrid.worstDay.pnl, currency)} (${calendarGrid.worstDay.date.slice(5)})`
+                    : '—'}
+                </div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto pb-1">
+              <div className="min-w-[640px] space-y-2">
+                <div className="grid grid-cols-7 gap-2 text-center text-xs font-medium text-slate-500 pt-1">
+                  {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => (
+                    <div key={d}>{d}</div>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-7 gap-2">
+                  {calendarGrid.cells.map((cell, idx) => {
+                    if (!cell.iso) {
+                      return <div key={`empty-${idx}`} className="h-20 rounded-lg bg-slate-50/40 dark:bg-[#0B111E]/30" />;
+                    }
+                    const info = dayTradeMap.get(cell.iso);
+                    const isSelected = selectedCalendarDate === cell.iso;
+
+                    return (
+                      <button
+                        key={cell.iso}
+                        type="button"
+                        onClick={() => setSelectedCalendarDate(cell.iso!)}
+                        className={`h-20 p-2.5 rounded-lg border text-left flex flex-col justify-between transition-colors ${
+                          isSelected
+                            ? 'ring-2 ring-blue-500 border-blue-500'
+                            : info && info.pnl > 0
+                            ? 'bg-emerald-500/10 border-emerald-500/25'
+                            : info && info.pnl < 0
+                            ? 'bg-red-500/10 border-red-500/25'
+                            : info
+                            ? 'bg-slate-100 dark:bg-[#162033] border-slate-300 dark:border-slate-700'
+                            : 'bg-slate-50 dark:bg-[#0B111E] border-slate-200 dark:border-slate-800'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between w-full">
+                          <span className="font-mono text-xs font-semibold text-slate-700 dark:text-slate-300">
+                            {cell.dayNum}
+                          </span>
+                          {info && (
+                            <span className="text-[11px] font-mono text-slate-400">
+                              {info.count}T
+                            </span>
+                          )}
+                        </div>
+                        {info ? (
+                          <div
+                            className={`text-xs font-mono font-bold tabular-nums ${
+                              info.pnl >= 0 ? 'text-emerald-500' : 'text-red-500'
+                            }`}
+                          >
+                            {formatCurrency(info.pnl, currency)}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-slate-400/60">—</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Selected Day Trade Drill-Down */}
+          <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-3">
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+              Trades on {selectedCalendarDate} ({selectedDayTrades.length})
+            </h3>
+            {selectedDayTrades.length === 0 ? (
+              <p className="text-xs text-slate-500">
+                No trades recorded on {selectedCalendarDate}. Select any highlighted day above to inspect session trades.
+              </p>
+            ) : (
+              <div className="divide-y divide-slate-100 dark:divide-slate-800/60 text-xs">
+                {selectedDayTrades.map((t) => (
+                  <div key={t.id} className="py-2.5 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <span className="font-mono font-semibold text-slate-900 dark:text-white">
+                        {t.instrument} {t.direction}
+                      </span>
+                      <span className="text-slate-500 ml-2">
+                        {t.strategy} · {t.session}
+                        {t.timeframe ? ` · ${t.timeframe}` : ''}
+                        {t.setupGrade ? ` · Grade ${t.setupGrade}` : ''}
+                      </span>
+                      {t.mistakeTags && t.mistakeTags.length > 0 && (
+                        <div className="text-[11px] text-amber-500 mt-0.5">
+                          Mistakes: {t.mistakeTags.join(', ')}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-4 font-mono">
+                      <span className="text-slate-500">
+                        {t.rMultiple !== undefined ? `${t.rMultiple}R` : t.status}
+                      </span>
+                      <span
+                        className={`font-semibold ${
+                          t.netPnl === undefined
+                            ? 'text-slate-400'
+                            : t.netPnl >= 0
+                            ? 'text-emerald-500'
+                            : 'text-red-500'
+                        }`}
+                      >
+                        {t.netPnl !== undefined ? formatCurrency(t.netPnl, currency) : 'Open'}
+                      </span>
+                    </div>
                   </div>
-                  <div
-                    className={`font-mono font-bold tabular-nums mt-1 ${
-                      info.pnl >= 0 ? 'text-emerald-500' : 'text-red-500'
-                    }`}
-                  >
-                    {formatCurrency(info.pnl, currency)}
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === 'ai' && (
+        <div className="space-y-6">
+          {/* Manual Record Reader & Setup Prediction Baseline */}
+          <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 space-y-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <BrainCircuit className="w-4 h-4 text-blue-500" />
+                  <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                    Manual Record Reader & Forward Setup Prediction
+                  </h2>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 max-w-2xl leading-relaxed">
+                  Reads every manually logged setup, entry justification, session, emotion tag, and outcome to forecast your highest-probability edge and surface deep AI pattern diagnostics.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleRunAiPatternAnalysis}
+                disabled={aiLoading}
+                className="inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white transition-colors shrink-0"
+              >
+                <Activity className="w-3.5 h-3.5" />
+                {aiLoading ? 'Running AI Pattern & Prediction Audit...' : 'Run Deep AI Pattern & Prediction'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 dark:divide-slate-800 border-y border-slate-200 dark:border-slate-800 text-xs">
+              <div className="py-3.5 sm:pr-5 space-y-1">
+                <div className="text-slate-500">Model Readiness</div>
+                <div className="text-sm font-bold text-slate-900 dark:text-white">
+                  {manualInsights.readinessLabel}
+                </div>
+                <div className="font-mono text-slate-500">
+                  {manualInsights.closedTradesAnalyzed} closed · {manualInsights.totalNonDraftTrades} logged
+                </div>
+              </div>
+              <div className="py-3.5 sm:px-5 space-y-1">
+                <div className="text-slate-500">Projected Disciplined Hit Rate</div>
+                <div className="text-lg font-bold font-mono tabular-nums text-emerald-500">
+                  {manualInsights.predictedNextWinRate !== null
+                    ? `${manualInsights.predictedNextWinRate}%`
+                    : '—'}
+                </div>
+                <div className="font-mono text-slate-500">
+                  Expected R:{' '}
+                  {manualInsights.predictedExpectedR !== null
+                    ? `${manualInsights.predictedExpectedR >= 0 ? '+' : ''}${manualInsights.predictedExpectedR}R`
+                    : '—'}
+                </div>
+              </div>
+              <div className="py-3.5 sm:px-5 space-y-1">
+                <div className="text-slate-500">Manual Record Quality</div>
+                <div className="text-lg font-bold font-mono tabular-nums text-blue-500">
+                  {manualInsights.documentationRate}%
+                </div>
+                <div className="font-mono text-slate-500">
+                  Plan Adherence: {manualInsights.planAdherenceRate}%
+                </div>
+              </div>
+              <div className="py-3.5 sm:pl-5 space-y-1">
+                <div className="text-slate-500">Top Setup Profile</div>
+                <div className="text-sm font-bold text-slate-900 dark:text-white">
+                  {manualInsights.topSetup
+                    ? `${manualInsights.topSetup.instrument} ${manualInsights.topSetup.direction}`
+                    : '—'}
+                </div>
+                <div className="text-slate-500">
+                  {manualInsights.topSetup
+                    ? `${manualInsights.topSetup.session} · ${manualInsights.topSetup.winRate}% WR`
+                    : 'Awaiting closed trades'}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <div className="font-semibold text-slate-900 dark:text-white">
+                {manualInsights.predictionHeadline}
+              </div>
+              <ul className="space-y-1.5 text-slate-600 dark:text-slate-300">
+                {manualInsights.predictionGuidance.map((line, i) => (
+                  <li key={i} className="leading-relaxed">
+                    · {line}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          {aiError && (
+            <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/25 text-xs text-red-500">
+              {aiError}
+            </div>
+          )}
+
+          {!aiReport && !aiLoading && !aiError && (
+            <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-10 text-center space-y-2.5">
+              <BrainCircuit className="w-8 h-8 text-blue-500/70 mx-auto" />
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
+                AI Pattern & Prediction Engine Ready
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-lg mx-auto leading-relaxed">
+                Select <span className="font-semibold text-blue-500">Run Deep AI Pattern & Prediction</span> above to analyze your {nonDraftCount} manual trade records, entry justifications, and {psychologyAssessments.length} psychology assessments.
+              </p>
+            </div>
+          )}
+
+          {aiReport && (
+            <div className="space-y-6">
+              {aiReport.predictions && (
+                <div className="bg-white dark:bg-[#0F172A] border border-blue-500/30 rounded-xl p-5 md:p-6 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-base font-semibold text-slate-900 dark:text-white">
+                      AI Setup Forecast & Guidance from Your Manual Records
+                    </h3>
+                    {aiMeta && (
+                      <span className="text-xs font-mono text-slate-500">
+                        {aiMeta.tradesAnalyzed} records analyzed · {formatFirestoreDate(aiMeta.generatedAt)}
+                      </span>
+                    )}
                   </div>
-                  <div className="text-[11px] text-slate-500 mt-0.5">
-                    {info.count} trade{info.count === 1 ? '' : 's'}
+
+                  <p className="text-xs md:text-sm leading-relaxed text-slate-700 dark:text-slate-200">
+                    {aiReport.predictions.nextTradeOutlook}
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs pt-2 border-t border-slate-200 dark:border-slate-800">
+                    <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 space-y-1">
+                      <div className="text-slate-500">Recommended Setup Focus</div>
+                      <div className="font-semibold text-slate-900 dark:text-white leading-relaxed">
+                        {aiReport.predictions.recommendedSetupFocus}
+                      </div>
+                    </div>
+                    <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 space-y-1">
+                      <div className="text-slate-500">Projected Win-Rate Range</div>
+                      <div className="text-sm font-bold font-mono text-emerald-500">
+                        {aiReport.predictions.projectedWinRateRange}
+                      </div>
+                    </div>
+                    <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 space-y-1">
+                      <div className="text-slate-500">Risk Watch Trigger</div>
+                      <div className="text-amber-500 font-medium leading-relaxed">
+                        {aiReport.predictions.riskWatchTrigger}
+                      </div>
+                    </div>
+                    <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 space-y-1">
+                      <div className="text-slate-500">Manual Record Quality Feedback</div>
+                      <div className="text-slate-700 dark:text-slate-300 leading-relaxed">
+                        {aiReport.predictions.recordQualityFeedback}
+                      </div>
+                    </div>
                   </div>
                 </div>
-              ))}
+              )}
+
+              <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 space-y-4">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+                  Executive Behavioural & Performance Summary
+                </h3>
+                <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                  {aiReport.summary}
+                </p>
+
+                {aiReport.strengths?.length > 0 && (
+                  <div className="pt-3 border-t border-slate-200 dark:border-slate-800">
+                    <div className="text-xs font-semibold text-emerald-500 mb-2">
+                      Observed Strengths
+                    </div>
+                    <ul className="divide-y divide-slate-200 dark:divide-slate-800 text-xs">
+                      {aiReport.strengths.map((s, idx) => (
+                        <li
+                          key={idx}
+                          className="py-2.5 text-slate-700 dark:text-slate-200"
+                        >
+                          {s}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {(aiReport.patterns || []).map((pat, idx) => (
+                  <div
+                    key={idx}
+                    className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 space-y-2.5 text-xs"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-slate-900 dark:text-white">
+                        {pat.title}
+                      </span>
+                      <span
+                        className={`text-xs font-medium capitalize shrink-0 ${
+                          pat.severity === 'critical'
+                            ? 'text-red-500'
+                            : pat.severity === 'caution'
+                            ? 'text-amber-500'
+                            : 'text-emerald-500'
+                        }`}
+                      >
+                        {pat.category} · {pat.severity}
+                      </span>
+                    </div>
+                    <p className="text-slate-500 dark:text-slate-400 leading-relaxed">
+                      <span className="font-semibold text-slate-700 dark:text-slate-200">Evidence: </span>
+                      {pat.evidence}
+                    </p>
+                    <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                      <span className="font-semibold text-blue-500">Action: </span>
+                      {pat.recommendation}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-xs">
+                <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 space-y-2">
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+                    Psychology & Discipline Insights
+                  </h3>
+                  <ul className="divide-y divide-slate-200 dark:divide-slate-800 text-slate-600 dark:text-slate-300">
+                    {(aiReport.psychologyInsights || []).map((item, idx) => (
+                      <li key={idx} className="py-2.5 leading-relaxed">
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 space-y-2">
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+                    Next-Session Corrective Action Plan
+                  </h3>
+                  <ol className="divide-y divide-slate-200 dark:divide-slate-800 text-slate-600 dark:text-slate-300 list-decimal list-inside">
+                    {(aiReport.actionPlan || []).map((step, idx) => (
+                      <li key={idx} className="py-2.5 leading-relaxed">
+                        {step}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              </div>
             </div>
           )}
         </div>

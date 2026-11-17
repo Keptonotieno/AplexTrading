@@ -121,22 +121,22 @@ export const TradingJournal: React.FC = () => {
       </div>
 
       {/* Filters Toolbar */}
-      <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3.5">
-        <div className="relative lg:col-span-2">
+      <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        <div className="relative sm:col-span-2 lg:col-span-2">
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search pair, strategy, justification..."
-            className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
+            className="w-full pl-9 pr-3 py-2 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
           />
         </div>
         <select
           aria-label="Filter by status"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="px-3 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"
+          className="px-3.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"
         >
           <option value="all">All Statuses</option>
           <option value="closed">Closed</option>
@@ -148,7 +148,7 @@ export const TradingJournal: React.FC = () => {
           aria-label="Filter by instrument"
           value={instrumentFilter}
           onChange={(e) => setInstrumentFilter(e.target.value)}
-          className="px-3 py-1.5 text-xs font-mono rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"
+          className="px-3.5 py-2 text-xs font-mono rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"
         >
           <option value="all">All Pairs</option>
           {Object.keys(INSTRUMENT_SPECS).map((sym) => (
@@ -161,7 +161,7 @@ export const TradingJournal: React.FC = () => {
           aria-label="Filter by strategy"
           value={strategyFilter}
           onChange={(e) => setStrategyFilter(e.target.value)}
-          className="px-3 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"
+          className="px-3.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"
         >
           <option value="all">All Strategies</option>
           {STRATEGY_OPTIONS.map((s) => (
@@ -174,7 +174,7 @@ export const TradingJournal: React.FC = () => {
           aria-label="Filter by challenge cycle"
           value={cycleFilter}
           onChange={(e) => setCycleFilter(e.target.value)}
-          className="px-3 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"
+          className="px-3.5 py-2 text-xs rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200"
         >
           <option value="all">All Cycles</option>
           {challengeCycles.map((c) => (
@@ -184,7 +184,7 @@ export const TradingJournal: React.FC = () => {
           ))}
         </select>
 
-        <div className="sm:col-span-2 lg:col-span-6 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+        <div className="sm:col-span-2 lg:col-span-3 xl:col-span-6 flex flex-wrap items-center gap-3 text-xs text-slate-500">
           <span>Date range:</span>
           <input
             type="date"
@@ -318,8 +318,13 @@ export const TradingJournal: React.FC = () => {
                       >
                         {t.netPnl !== undefined ? formatCurrency(t.netPnl, currency) : '—'}
                       </td>
-                      <td className="py-3 px-3 text-slate-600 dark:text-slate-300 max-w-[140px] truncate">
-                        {t.strategy}
+                      <td className="py-3.5 px-3 text-slate-600 dark:text-slate-300 max-w-[190px]">
+                        <div className="truncate">{t.strategy}</div>
+                        {(t.timeframe || t.setupGrade) && (
+                          <div className="text-[11px] font-mono text-slate-400">
+                            {[t.timeframe, t.setupGrade ? `Grade ${t.setupGrade}` : null].filter(Boolean).join(' · ')}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-3 capitalize text-slate-600 dark:text-slate-300">
                         {t.status}
@@ -361,14 +366,18 @@ export const TradingJournal: React.FC = () => {
 
       {/* Trade Detail & Audit History Drawer */}
       {selectedTrade && (
-        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-xl p-5 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-xl p-5 md:p-6 space-y-5">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4">
             <div>
               <h3 className="text-base font-semibold text-slate-900 dark:text-white">
                 {selectedTrade.instrument} {selectedTrade.direction} · {selectedTrade.strategy}
               </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Session: {selectedTrade.session} · Status: {selectedTrade.status} · Edit Count: {selectedTrade.editCount}
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Session: {selectedTrade.session}
+                {selectedTrade.timeframe ? ` · TF: ${selectedTrade.timeframe}` : ''}
+                {selectedTrade.setupGrade ? ` · Grade: ${selectedTrade.setupGrade}` : ''}
+                {selectedTrade.emotionTag ? ` · Emotion: ${selectedTrade.emotionTag}` : ''}
+                {` · Status: ${selectedTrade.status} · Edit Count: ${selectedTrade.editCount}`}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -378,22 +387,50 @@ export const TradingJournal: React.FC = () => {
                   setEditingTrade(selectedTrade);
                   setModalOpen(true);
                 }}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+                className="px-3.5 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700"
               >
                 Edit Trade
               </button>
               <button
                 type="button"
                 onClick={() => setSelectedTrade(null)}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"
+                className="px-3.5 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300"
               >
                 Close
               </button>
             </div>
           </div>
 
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 rounded-lg p-4">
+            <div>
+              <div className="text-slate-500">Planned R:R</div>
+              <div className="font-mono font-semibold text-slate-900 dark:text-white mt-1">
+                {selectedTrade.riskRewardRatio ? `1 : ${selectedTrade.riskRewardRatio}` : '—'}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-500">Gross / Net P/L</div>
+              <div className="font-mono font-semibold text-slate-900 dark:text-white mt-1">
+                {selectedTrade.grossPnl !== undefined ? formatCurrency(selectedTrade.grossPnl, currency) : '—'} /{' '}
+                {selectedTrade.netPnl !== undefined ? formatCurrency(selectedTrade.netPnl, currency) : '—'}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-500">Fees (Comm / Swap)</div>
+              <div className="font-mono font-semibold text-slate-900 dark:text-white mt-1">
+                ${(selectedTrade.commission ?? 0).toFixed(2)} / ${(selectedTrade.swap ?? 0).toFixed(2)}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-500">Plan Adherence</div>
+              <div className={`font-semibold mt-1 ${selectedTrade.planFollowed ? 'text-emerald-500' : 'text-amber-500'}`}>
+                {selectedTrade.planFollowed ? 'Plan Followed' : 'Plan Deviated'}
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               <div>
                 <span className="font-semibold text-slate-700 dark:text-slate-200">Entry Justification:</span>
                 <p className="text-slate-600 dark:text-slate-300 mt-0.5">
@@ -406,12 +443,43 @@ export const TradingJournal: React.FC = () => {
                   {selectedTrade.exitJustification || 'Not documented.'}
                 </p>
               </div>
+              {selectedTrade.partialCloseNotes && (
+                <div>
+                  <span className="font-semibold text-slate-700 dark:text-slate-200">Partial Close / Scaling Notes:</span>
+                  <p className="text-slate-600 dark:text-slate-300 mt-0.5">
+                    {selectedTrade.partialCloseNotes}
+                  </p>
+                </div>
+              )}
+              {selectedTrade.observations && (
+                <div>
+                  <span className="font-semibold text-slate-700 dark:text-slate-200">Observations:</span>
+                  <p className="text-slate-600 dark:text-slate-300 mt-0.5">
+                    {selectedTrade.observations}
+                  </p>
+                </div>
+              )}
               <div>
                 <span className="font-semibold text-slate-700 dark:text-slate-200">Lessons Learned:</span>
                 <p className="text-slate-600 dark:text-slate-300 mt-0.5">
                   {selectedTrade.lessonsLearned || 'Not documented.'}
                 </p>
               </div>
+              {selectedTrade.mistakeTags && selectedTrade.mistakeTags.length > 0 && (
+                <div>
+                  <span className="font-semibold text-slate-700 dark:text-slate-200">Mistake Tags:</span>
+                  <div className="flex flex-wrap gap-1.5 mt-1">
+                    {selectedTrade.mistakeTags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/25 text-amber-500 text-[11px] font-medium"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="space-y-3">

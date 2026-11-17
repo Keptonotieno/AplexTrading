@@ -24,13 +24,13 @@ service cloud.firestore {
 
     function isAdmin() {
       return isVerified() && (
-        request.auth.token.email == 'keptonokoth@gmail.com' ||
+        request.auth.token.email in ['keptonokoth@gmail.com', 'keptonotieno@gmail.com'] ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
 
     function isBootstrappedAdminEmail() {
-      return isVerified() && request.auth.token.email == 'keptonokoth@gmail.com';
+      return isVerified() && request.auth.token.email in ['keptonokoth@gmail.com', 'keptonotieno@gmail.com'];
     }
 
     function isValidId(id) {
@@ -123,7 +123,7 @@ service cloud.firestore {
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
         && data.currency in ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF']
         && isOptString(data, 'brokerName', 80)
-        && data.accountType in ['demo', 'live', 'prop_challenge', 'funded']
+        && data.accountType in ['cent', 'standard', 'demo', 'live', 'prop_challenge', 'funded']
         && data.initialBalance is number && data.initialBalance >= 0
         && data.currentBalance is number
         && data.isDefault is bool
@@ -155,7 +155,8 @@ service cloud.firestore {
           'entryPrice', 'stopLoss', 'takeProfit', 'exitPrice', 'lotSize',
           'accountBalanceAtEntry', 'plannedRiskPercent', 'plannedRiskAmount', 'riskRewardRatio',
           'grossPnl', 'commission', 'swap', 'netPnl', 'rMultiple', 'session', 'strategy',
-          'marketCondition', 'status', 'openedAt', 'closedAt', 'entryJustification',
+          'marketCondition', 'status', 'openedAt', 'closedAt', 'timeframe', 'setupGrade',
+          'emotionTag', 'mistakeTags', 'partialCloseNotes', 'entryJustification',
           'exitJustification', 'observations', 'lessonsLearned', 'planFollowed',
           'riskViolation', 'editCount', 'createdAt', 'updatedAt'
         ])
@@ -185,6 +186,11 @@ service cloud.firestore {
         && data.status in ['planned', 'open', 'closed', 'draft']
         && data.openedAt is string && data.openedAt.size() >= 4 && data.openedAt.size() <= 40
         && isOptString(data, 'closedAt', 40)
+        && isOptString(data, 'timeframe', 20)
+        && (!('setupGrade' in data) || data.setupGrade in ['A+', 'A', 'B', 'C'])
+        && (!('emotionTag' in data) || data.emotionTag in ['calm', 'focused', 'anxious', 'frustrated', 'overconfident', 'hesitant', 'fatigued'])
+        && (!('mistakeTags' in data) || (data.mistakeTags is list && data.mistakeTags.size() <= 8 && (data.mistakeTags.size() == 0 || data.mistakeTags[0] is string)))
+        && isOptString(data, 'partialCloseNotes', 500)
         && isOptString(data, 'entryJustification', 2000)
         && isOptString(data, 'exitJustification', 2000)
         && isOptString(data, 'observations', 2000)
@@ -581,6 +587,10 @@ service cloud.firestore {
       allow create: if isVerified() && isValidId(accountId)
         && isValidTradingAccount(incoming(), accountId)
         && incoming().userId == request.auth.uid
+        && (
+          (incoming().accountType in ['cent', 'demo'] && incoming().initialBalance >= 10) ||
+          (incoming().accountType in ['standard', 'live', 'prop_challenge', 'funded'] && incoming().initialBalance >= 50)
+        )
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
       allow update: if isVerified() && isValidId(accountId)
@@ -642,8 +652,10 @@ service cloud.firestore {
               'plannedRiskPercent', 'plannedRiskAmount', 'riskRewardRatio',
               'grossPnl', 'commission', 'swap', 'netPnl', 'rMultiple',
               'session', 'strategy', 'marketCondition', 'status', 'openedAt',
-              'closedAt', 'entryJustification', 'exitJustification', 'observations',
-              'lessonsLearned', 'planFollowed', 'riskViolation', 'editCount', 'updatedAt'
+              'closedAt', 'timeframe', 'setupGrade', 'emotionTag', 'mistakeTags',
+              'partialCloseNotes', 'entryJustification', 'exitJustification',
+              'observations', 'lessonsLearned', 'planFollowed', 'riskViolation',
+              'editCount', 'updatedAt'
             ])
           )
         );

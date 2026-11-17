@@ -8,6 +8,13 @@ export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 
 export const BOOTSTRAPPED_ADMIN_EMAIL = 'keptonokoth@gmail.com';
+export const ALLOWED_ADMIN_EMAILS = ['keptonokoth@gmail.com', 'keptonotieno@gmail.com'] as const;
+
+export function isAllowedAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  const normalized = email.trim().toLowerCase();
+  return ALLOWED_ADMIN_EMAILS.some((allowed) => allowed === normalized);
+}
 
 export enum OperationType {
   CREATE = 'create',

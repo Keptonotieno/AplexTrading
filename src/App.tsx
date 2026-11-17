@@ -36,7 +36,7 @@ function MentorshipAppContent() {
     );
   }
 
-  if (!firebaseUser || !firebaseUser.emailVerified || needsOnboarding) {
+  if (!firebaseUser || !firebaseUser.emailVerified || (needsOnboarding && workspaceMode !== 'admin')) {
     return <AuthPortal />;
   }
 
@@ -58,7 +58,7 @@ function MentorshipAppContent() {
       case 'psychology':
         return <PsychologyView />;
       case 'analysis':
-        return <TradeAnalysisView />;
+        return <TradeAnalysisView onNavigate={setStudentTab} />;
       case 'learning':
         return <LearningCentreView />;
       case 'challenges':

@@ -89,34 +89,34 @@ export const CommunityView: React.FC = () => {
           <ShieldCheck className="w-4 h-4 text-blue-500" />
           Multi-Factor Scoring Methodology (Minimum {minTrades} closed trades required)
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
-          <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E]">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 text-xs">
+          <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200/70 dark:border-slate-800">
             <div className="text-slate-500">Risk Management</div>
-            <div className="font-mono font-bold text-blue-500 mt-0.5">
+            <div className="text-base font-mono font-bold text-blue-500 mt-1">
               {systemSettings.weightRiskManagement}%
             </div>
           </div>
-          <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E]">
+          <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200/70 dark:border-slate-800">
             <div className="text-slate-500">Trading Discipline</div>
-            <div className="font-mono font-bold text-emerald-500 mt-0.5">
+            <div className="text-base font-mono font-bold text-emerald-500 mt-1">
               {systemSettings.weightDiscipline}%
             </div>
           </div>
-          <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E]">
+          <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200/70 dark:border-slate-800">
             <div className="text-slate-500">Consistency</div>
-            <div className="font-mono font-bold text-indigo-400 mt-0.5">
+            <div className="text-base font-mono font-bold text-indigo-400 mt-1">
               {systemSettings.weightConsistency}%
             </div>
           </div>
-          <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E]">
+          <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200/70 dark:border-slate-800">
             <div className="text-slate-500">Risk-Adj. Profit</div>
-            <div className="font-mono font-bold text-amber-500 mt-0.5">
+            <div className="text-base font-mono font-bold text-amber-500 mt-1">
               {systemSettings.weightProfitability}%
             </div>
           </div>
-          <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E]">
+          <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200/70 dark:border-slate-800">
             <div className="text-slate-500">Journal Completion</div>
-            <div className="font-mono font-bold text-cyan-500 mt-0.5">
+            <div className="text-base font-mono font-bold text-cyan-500 mt-1">
               {systemSettings.weightJournalCompletion}%
             </div>
           </div>
@@ -144,7 +144,7 @@ export const CommunityView: React.FC = () => {
                   key={key}
                   type="button"
                   onClick={() => setRankBy(key)}
-                  className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors ${
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
                     rankBy === key
                       ? 'bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white shadow-xs'
                       : 'text-slate-500'
@@ -217,7 +217,7 @@ export const CommunityView: React.FC = () => {
         </div>
 
         {/* Community Announcements & Mentorship Sessions */}
-        <div className="lg:col-span-4 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 space-y-3">
+        <div className="lg:col-span-4 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 space-y-4">
           <h2 className="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2">
             <Megaphone className="w-4 h-4 text-blue-500" />
             Community Updates

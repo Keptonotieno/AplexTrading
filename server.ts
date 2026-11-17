@@ -3,13 +3,14 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { GoogleGenAI, Type } from '@google/genai';
 import { calculatePositionSizing, computePortfolioMetrics } from './src/lib/forexCalculations.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = 3000;
-const BOOTSTRAPPED_ADMIN_EMAIL = 'keptonokoth@gmail.com';
+const ALLOWED_ADMIN_EMAILS = new Set(['keptonokoth@gmail.com', 'keptonotieno@gmail.com']);
 const UPLOADS_DIR = path.resolve(__dirname, 'uploads');
 
 if (!fs.existsSync(UPLOADS_DIR)) {
@@ -101,7 +102,7 @@ async function verifyFirebaseToken(req: AuthedRequest, res: Response, next: Next
 
     const email = (userRecord.email || '').toLowerCase();
     const emailVerified = Boolean(userRecord.emailVerified);
-    let isAdmin = emailVerified && email === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase();
+    let isAdmin = emailVerified && ALLOWED_ADMIN_EMAILS.has(email);
 
     if (!isAdmin && emailVerified) {
       try {
@@ -199,6 +200,8 @@ async function startServer() {
     const takeProfit = body.takeProfit !== undefined ? Number(body.takeProfit) : undefined;
     const lotSizeOverride = body.lotSizeOverride !== undefined ? Number(body.lotSizeOverride) : undefined;
 
+    const accountType = typeof body.accountType === 'string' ? body.accountType : undefined;
+
     if (!instrument || !Number.isFinite(accountBalance) || !Number.isFinite(riskPercent)) {
       res.status(400).json({ error: 'Invalid calculation inputs.' });
       return;
@@ -213,6 +216,7 @@ async function startServer() {
       stopLoss,
       takeProfit,
       lotSizeOverride,
+      accountType: accountType as never,
     });
     res.json(result);
   });
@@ -233,6 +237,194 @@ async function startServer() {
       settings: body.settings,
     });
     res.json(metrics);
+  });
+
+  // Server-side Gemini AI Trading Pattern Recognition endpoint (analyzes actual logged trades & psychology)
+  app.post('/api/ai/pattern-recognition', rateLimit(15, 60_000), verifyFirebaseToken, async (req: AuthedRequest, res) => {
+    const user = req.user;
+    if (!user || !user.emailVerified) {
+      res.status(403).json({ error: 'Verified account required for AI pattern recognition.' });
+      return;
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({ error: 'Gemini AI service is not configured on the server.' });
+      return;
+    }
+
+    const body = req.body || {};
+    const rawTrades = Array.isArray(body.trades) ? body.trades : [];
+    const rawAssessments = Array.isArray(body.assessments) ? body.assessments : [];
+    const rawViolations = Array.isArray(body.violations) ? body.violations : [];
+    const studentName = typeof body.studentName === 'string' ? body.studentName.slice(0, 80) : 'Student';
+
+    const sanitizedTrades = rawTrades
+      .filter((t: Record<string, unknown>) => t && t.status !== 'draft')
+      .slice(0, 120)
+      .map((t: Record<string, unknown>) => ({
+        instrument: t.instrument,
+        direction: t.direction,
+        status: t.status,
+        session: t.session,
+        timeframe: t.timeframe,
+        strategy: t.strategy,
+        setupGrade: t.setupGrade,
+        emotionTag: t.emotionTag,
+        mistakeTags: Array.isArray(t.mistakeTags) ? t.mistakeTags.slice(0, 8) : [],
+        plannedRiskPercent: t.plannedRiskPercent,
+        riskRewardRatio: t.riskRewardRatio,
+        netPnl: t.netPnl,
+        rMultiple: t.rMultiple,
+        planFollowed: t.planFollowed,
+        riskViolation: t.riskViolation,
+        marketCondition: typeof t.marketCondition === 'string' ? t.marketCondition.slice(0, 60) : undefined,
+        entryJustification: typeof t.entryJustification === 'string' ? t.entryJustification.slice(0, 180) : undefined,
+        exitJustification: typeof t.exitJustification === 'string' ? t.exitJustification.slice(0, 160) : undefined,
+        observations: typeof t.observations === 'string' ? t.observations.slice(0, 160) : undefined,
+        lessonsLearned: typeof t.lessonsLearned === 'string' ? t.lessonsLearned.slice(0, 160) : undefined,
+        openedAt: t.openedAt,
+        closedAt: t.closedAt,
+      }));
+
+    if (sanitizedTrades.length === 0) {
+      res.status(400).json({
+        error: 'Record at least one planned, open, or closed trade before running pattern and prediction diagnostics.',
+      });
+      return;
+    }
+
+    const sanitizedAssessments = rawAssessments.slice(0, 40).map((a: Record<string, unknown>) => ({
+      phase: a.phase,
+      emotionalState: a.emotionalState,
+      confidenceLevel: a.confidenceLevel,
+      fomoLevel: a.fomoLevel,
+      revengeTendency: a.revengeTendency,
+      followsStrategy: a.followsStrategy,
+      overtradingOccurred: a.overtradingOccurred,
+      closedEmotionally: a.closedEmotionally,
+      createdAt: a.createdAt,
+    }));
+
+    const sanitizedViolations = rawViolations.slice(0, 30).map((v: Record<string, unknown>) => ({
+      policyRule: v.policyRule,
+      severity: v.severity,
+      thresholdValue: v.thresholdValue,
+      actualValue: v.actualValue,
+    }));
+
+    const metricsSnapshot =
+      body.metrics && typeof body.metrics === 'object' ? body.metrics : undefined;
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      });
+
+      const prompt = [
+        `Read and understand how ${studentName} enters their manual Forex trading records, psychology check-ins, and notes below.`,
+        `Strictly reference ONLY the numbers, pairs, sessions, strategies, justifications, mistake tags, and behavioural assessments provided below.`,
+        `Do NOT invent trades, live market prices, or broker calls.`,
+        `1) Identify recurring execution, timing, risk/drawdown, strategy, and psychological patterns with concrete evidence.`,
+        `2) Provide data-grounded forward predictions helping the trader prepare their next setups: which setup profile (pair/direction/session/strategy/timeframe) shows the highest predicted edge in their records, expected win-rate range if discipline holds, early drawdown/mistake watch triggers, and how to improve their manual record-keeping.`,
+        ``,
+        `SUMMARY METRICS: ${JSON.stringify(metricsSnapshot ?? {})}`,
+        `MANUAL TRADES (${sanitizedTrades.length}): ${JSON.stringify(sanitizedTrades)}`,
+        `PSYCHOLOGY ASSESSMENTS (${sanitizedAssessments.length}): ${JSON.stringify(sanitizedAssessments)}`,
+        `RISK VIOLATIONS (${sanitizedViolations.length}): ${JSON.stringify(sanitizedViolations)}`,
+      ].join('\n');
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: prompt,
+        config: {
+          systemInstruction:
+            'You are a disciplined senior Forex risk & performance analyst. Read how the trader records their manual journal entries, detect behavioural and statistical patterns, and provide forward-looking setup & outcome probability guidance strictly derived from their own recorded history. Never invent live market quotes or broker advice.',
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              summary: { type: Type.STRING },
+              predictions: {
+                type: Type.OBJECT,
+                properties: {
+                  nextTradeOutlook: { type: Type.STRING },
+                  recommendedSetupFocus: { type: Type.STRING },
+                  projectedWinRateRange: { type: Type.STRING },
+                  riskWatchTrigger: { type: Type.STRING },
+                  recordQualityFeedback: { type: Type.STRING },
+                },
+                required: [
+                  'nextTradeOutlook',
+                  'recommendedSetupFocus',
+                  'projectedWinRateRange',
+                  'riskWatchTrigger',
+                  'recordQualityFeedback',
+                ],
+              },
+              strengths: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              patterns: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    category: {
+                      type: Type.STRING,
+                      enum: ['execution', 'risk', 'timing', 'psychology', 'strategy'],
+                    },
+                    severity: {
+                      type: Type.STRING,
+                      enum: ['positive', 'caution', 'critical'],
+                    },
+                    evidence: { type: Type.STRING },
+                    recommendation: { type: Type.STRING },
+                  },
+                  required: ['title', 'category', 'severity', 'evidence', 'recommendation'],
+                },
+              },
+              psychologyInsights: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              actionPlan: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+            },
+            required: [
+              'summary',
+              'predictions',
+              'strengths',
+              'patterns',
+              'psychologyInsights',
+              'actionPlan',
+            ],
+          },
+        },
+      });
+
+      const rawText = response.text;
+      if (!rawText) {
+        res.status(502).json({ error: 'AI pattern analyzer returned an empty response.' });
+        return;
+      }
+
+      const parsed = JSON.parse(rawText);
+      res.json({
+        generatedAt: new Date().toISOString(),
+        tradesAnalyzed: sanitizedTrades.length,
+        analysis: parsed,
+      });
+    } catch (err) {
+      console.error('[AI Pattern Recognition] Error:', err);
+      const message = err instanceof Error ? err.message : 'AI pattern recognition request failed.';
+      res.status(502).json({ error: message });
+    }
   });
 
   // Secure validated chart screenshot upload
@@ -324,6 +516,192 @@ async function startServer() {
     }
 
     res.sendFile(filePath);
+  });
+
+  // Protected screenshot deletion (only owner or verified mentor/admin)
+  app.delete('/api/screenshots/:uid/:filename', rateLimit(40, 60_000), verifyFirebaseToken, (req: AuthedRequest, res) => {
+    const user = req.user;
+    if (!user) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    const targetUid = String(req.params.uid || '').replace(/[^a-zA-Z0-9_-]/g, '');
+    const filename = path.basename(String(req.params.filename || ''));
+
+    if (!targetUid || !filename || !/^[a-zA-Z0-9_.-]+\.(png|jpg|webp)$/.test(filename)) {
+      res.status(400).json({ error: 'Invalid screenshot reference.' });
+      return;
+    }
+
+    if (user.uid !== targetUid && !user.isAdmin) {
+      res.status(403).json({ error: 'Access denied to delete another student’s chart screenshot.' });
+      return;
+    }
+
+    const filePath = path.join(UPLOADS_DIR, targetUid, filename);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+
+    res.json({ deleted: true });
+  });
+
+  // Server-side multimodal Gemini chart screenshot & setup review
+  app.post('/api/ai/chart-review', rateLimit(15, 60_000), verifyFirebaseToken, async (req: AuthedRequest, res) => {
+    const user = req.user;
+    if (!user || !user.emailVerified) {
+      res.status(403).json({ error: 'Verified account required for chart analysis.' });
+      return;
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      res.status(503).json({ error: 'Gemini AI service is not configured on the server.' });
+      return;
+    }
+
+    const body = req.body || {};
+    const imageUrl = typeof body.imageUrl === 'string' ? body.imageUrl.trim() : '';
+    const match = imageUrl.match(/^\/api\/screenshots\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+\.(png|jpg|webp))$/);
+    if (!match) {
+      res.status(400).json({ error: 'Valid uploaded screenshot URL is required for chart review.' });
+      return;
+    }
+
+    const targetUid = match[1];
+    const filename = path.basename(match[2]);
+    const ext = match[3];
+    if (user.uid !== targetUid && !user.isAdmin) {
+      res.status(403).json({ error: 'Access denied to another student’s chart screenshot.' });
+      return;
+    }
+
+    const filePath = path.join(UPLOADS_DIR, targetUid, filename);
+    if (!fs.existsSync(filePath)) {
+      res.status(404).json({ error: 'Screenshot file not found on server.' });
+      return;
+    }
+
+    const mimeType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+    const imageBuffer = fs.readFileSync(filePath);
+    const base64Image = imageBuffer.toString('base64');
+
+    const trade = body.trade && typeof body.trade === 'object' ? body.trade : {};
+    const screenshotMeta = body.screenshot && typeof body.screenshot === 'object' ? body.screenshot : {};
+
+    const tradeContext = {
+      instrument: trade.instrument,
+      direction: trade.direction,
+      status: trade.status,
+      session: trade.session,
+      timeframe: trade.timeframe,
+      strategy: trade.strategy,
+      setupGrade: trade.setupGrade,
+      entryPrice: trade.entryPrice,
+      stopLoss: trade.stopLoss,
+      takeProfit: trade.takeProfit,
+      exitPrice: trade.exitPrice,
+      plannedRiskPercent: trade.plannedRiskPercent,
+      riskRewardRatio: trade.riskRewardRatio,
+      netPnl: trade.netPnl,
+      rMultiple: trade.rMultiple,
+      planFollowed: trade.planFollowed,
+      entryJustification: typeof trade.entryJustification === 'string' ? trade.entryJustification.slice(0, 500) : undefined,
+      lessonsLearned: typeof trade.lessonsLearned === 'string' ? trade.lessonsLearned.slice(0, 400) : undefined,
+    };
+
+    const chartContext = {
+      stage: screenshotMeta.stage,
+      caption: typeof screenshotMeta.caption === 'string' ? screenshotMeta.caption.slice(0, 400) : '',
+      marketStructureNotes:
+        typeof screenshotMeta.marketStructureNotes === 'string'
+          ? screenshotMeta.marketStructureNotes.slice(0, 1500)
+          : '',
+    };
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
+      });
+
+      const textPrompt = [
+        'Inspect this manually uploaded Forex chart screenshot alongside the trader’s recorded trade parameters and market structure notes.',
+        'Evaluate how clearly the chart markup and notes align with the logged setup (direction, entry, stop-loss placement, take-profit target, risk-to-reward, and stage).',
+        'Do NOT invent live price feeds, broker quotes, or signals—only evaluate what is visible in the chart screenshot and stated in the manual trade log.',
+        '',
+        `LOGGED TRADE RECORD: ${JSON.stringify(tradeContext)}`,
+        `CHART STAGE & NOTES: ${JSON.stringify(chartContext)}`,
+      ].join('\n');
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType,
+                data: base64Image,
+              },
+            },
+            { text: textPrompt },
+          ],
+        },
+        config: {
+          systemInstruction:
+            'You are a senior Forex mentorship chart analyst. Review the trader’s chart screenshot, markups, and recorded trade plan strictly for technical clarity, structural invalidation logic, risk discipline, and documentation quality.',
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              structureAlignment: {
+                type: Type.STRING,
+                enum: ['aligned', 'mixed', 'unclear'],
+              },
+              chartObservations: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              riskAndLevelCheck: { type: Type.STRING },
+              strengths: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              watchItems: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+              },
+              mentorPrepSummary: { type: Type.STRING },
+            },
+            required: [
+              'structureAlignment',
+              'chartObservations',
+              'riskAndLevelCheck',
+              'strengths',
+              'watchItems',
+              'mentorPrepSummary',
+            ],
+          },
+        },
+      });
+
+      const rawText = response.text;
+      if (!rawText) {
+        res.status(502).json({ error: 'Chart analyzer returned an empty response.' });
+        return;
+      }
+
+      const review = JSON.parse(rawText);
+      res.json({
+        generatedAt: new Date().toISOString(),
+        review,
+      });
+    } catch (err) {
+      console.error('[AI Chart Review] Error:', err);
+      const message = err instanceof Error ? err.message : 'Chart review request failed.';
+      res.status(502).json({ error: message });
+    }
   });
 
   // Production static vs Dev Vite middlewares

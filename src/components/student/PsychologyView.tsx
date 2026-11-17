@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { Brain, CheckCircle2, Info } from 'lucide-react';
+import { Activity, Brain, CheckCircle2, Info } from 'lucide-react';
 import { useMentorship } from '../../context/MentorshipContext';
 import { formatFirestoreDate } from '../../lib/firestore-helpers';
+import { formatCurrency, round2 } from '../../lib/forexCalculations';
 import { savePsychologyAssessment } from '../../services/mentorshipService';
 import type { EmotionalState } from '../../types/domain';
 
@@ -16,7 +17,8 @@ const EMOTIONS: EmotionalState[] = [
 ];
 
 export const PsychologyView: React.FC = () => {
-  const { firebaseUser, trades, psychologyAssessments } = useMentorship();
+  const { firebaseUser, activeAccount, trades, psychologyAssessments } = useMentorship();
+  const currency = activeAccount?.currency || 'USD';
 
   const [phase, setPhase] = useState<'pre_trade' | 'post_trade'>('pre_trade');
   const [tradeId, setTradeId] = useState('');
@@ -77,6 +79,106 @@ export const PsychologyView: React.FC = () => {
     };
   }, [psychologyAssessments]);
 
+  const behaviouralCorrelation = useMemo(() => {
+    const closed = trades.filter((t) => t.status === 'closed' && typeof t.netPnl === 'number');
+    const assessmentByTrade = new Map<string, EmotionalState>();
+    psychologyAssessments.forEach((a) => {
+      if (a.tradeId && !assessmentByTrade.has(a.tradeId)) {
+        assessmentByTrade.set(a.tradeId, a.emotionalState);
+      }
+    });
+
+    const emotionStats = new Map<
+      string,
+      { count: number; wins: number; netPnl: number; rSum: number; rCount: number }
+    >();
+    const mistakeStats = new Map<string, { count: number; netPnl: number }>();
+
+    const planFollowedStats = { count: 0, wins: 0, netPnl: 0 };
+    const planDeviatedStats = { count: 0, wins: 0, netPnl: 0 };
+
+    closed.forEach((t) => {
+      const pnl = t.netPnl ?? 0;
+      const isWin = pnl > 0.005;
+      const emotion = t.emotionTag || assessmentByTrade.get(t.id) || 'unspecified';
+
+      if (emotion !== 'unspecified') {
+        const cur = emotionStats.get(emotion) || {
+          count: 0,
+          wins: 0,
+          netPnl: 0,
+          rSum: 0,
+          rCount: 0,
+        };
+        cur.count++;
+        if (isWin) cur.wins++;
+        cur.netPnl += pnl;
+        if (typeof t.rMultiple === 'number' && Number.isFinite(t.rMultiple)) {
+          cur.rSum += t.rMultiple;
+          cur.rCount++;
+        }
+        emotionStats.set(emotion, cur);
+      }
+
+      if (t.planFollowed) {
+        planFollowedStats.count++;
+        if (isWin) planFollowedStats.wins++;
+        planFollowedStats.netPnl += pnl;
+      } else {
+        planDeviatedStats.count++;
+        if (isWin) planDeviatedStats.wins++;
+        planDeviatedStats.netPnl += pnl;
+      }
+
+      (t.mistakeTags || []).forEach((tag) => {
+        const mCur = mistakeStats.get(tag) || { count: 0, netPnl: 0 };
+        mCur.count++;
+        mCur.netPnl += pnl;
+        mistakeStats.set(tag, mCur);
+      });
+    });
+
+    const byEmotion = Array.from(emotionStats.entries())
+      .map(([emotion, v]) => ({
+        emotion,
+        trades: v.count,
+        winRate: round2((v.wins / v.count) * 100),
+        avgR: v.rCount > 0 ? round2(v.rSum / v.rCount) : null,
+        netPnl: round2(v.netPnl),
+      }))
+      .sort((a, b) => b.netPnl - a.netPnl);
+
+    const byMistake = Array.from(mistakeStats.entries())
+      .map(([tag, v]) => ({
+        tag,
+        count: v.count,
+        netPnl: round2(v.netPnl),
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      totalClosed: closed.length,
+      byEmotion,
+      byMistake,
+      planFollowed: {
+        ...planFollowedStats,
+        winRate:
+          planFollowedStats.count > 0
+            ? round2((planFollowedStats.wins / planFollowedStats.count) * 100)
+            : 0,
+        netPnl: round2(planFollowedStats.netPnl),
+      },
+      planDeviated: {
+        ...planDeviatedStats,
+        winRate:
+          planDeviatedStats.count > 0
+            ? round2((planDeviatedStats.wins / planDeviatedStats.count) * 100)
+            : 0,
+        netPnl: round2(planDeviatedStats.netPnl),
+      },
+    };
+  }, [trades, psychologyAssessments]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!firebaseUser) return;
@@ -115,7 +217,7 @@ export const PsychologyView: React.FC = () => {
           Trading Psychology & Discipline
         </h1>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Pre-trade readiness checks and post-trade behavioural reviews (educational self-reflection only)
+          Pre-trade readiness checks, post-trade behavioural reviews, and live emotion-to-outcome correlation
         </p>
       </div>
 
@@ -318,8 +420,8 @@ export const PsychologyView: React.FC = () => {
         </div>
 
         {/* Behavioural Patterns & History */}
-        <div className="lg:col-span-5 space-y-4">
-          <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 space-y-3">
+        <div className="lg:col-span-5 space-y-5">
+          <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 space-y-4">
             <h2 className="text-base font-semibold text-slate-900 dark:text-white">
               Self-Reported Behavioural Patterns
             </h2>
@@ -328,32 +430,32 @@ export const PsychologyView: React.FC = () => {
                 Complete pre-trade and post-trade check-ins to surface behavioural trends.
               </p>
             ) : (
-              <div className="space-y-3">
-                <div className="grid grid-cols-3 gap-2.5 text-center">
-                  <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-[#0B111E]">
-                    <div className="text-[11px] text-slate-500">Calm / Focused</div>
-                    <div className="text-base font-bold font-mono text-emerald-500">
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
+                  <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200/70 dark:border-slate-800">
+                    <div className="text-xs text-slate-500">Calm / Focused</div>
+                    <div className="text-lg font-bold font-mono tabular-nums text-emerald-500 mt-1">
                       {patterns.calmRate}%
                     </div>
                   </div>
-                  <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-[#0B111E]">
-                    <div className="text-[11px] text-slate-500">Avg FOMO</div>
-                    <div className="text-base font-bold font-mono text-amber-500">
+                  <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200/70 dark:border-slate-800">
+                    <div className="text-xs text-slate-500">Avg FOMO</div>
+                    <div className="text-lg font-bold font-mono tabular-nums text-amber-500 mt-1">
                       {patterns.fomoAvg}/10
                     </div>
                   </div>
-                  <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-[#0B111E]">
-                    <div className="text-[11px] text-slate-500">Revenge Flags</div>
-                    <div className="text-base font-bold font-mono text-red-500">
+                  <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200/70 dark:border-slate-800">
+                    <div className="text-xs text-slate-500">Revenge Flags</div>
+                    <div className="text-lg font-bold font-mono tabular-nums text-red-500 mt-1">
                       {patterns.revengeCount}
                     </div>
                   </div>
                 </div>
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   {patterns.recommendations.map((rec, i) => (
                     <div
                       key={i}
-                      className="p-2.5 rounded-lg bg-blue-500/5 border border-blue-500/20 text-xs text-slate-600 dark:text-slate-300 flex items-start gap-2"
+                      className="p-3 rounded-lg bg-blue-500/5 border border-blue-500/20 text-xs text-slate-600 dark:text-slate-300 flex items-start gap-2.5 leading-relaxed"
                     >
                       <Info className="w-3.5 h-3.5 text-blue-500 shrink-0 mt-0.5" />
                       <span>{rec}</span>
@@ -364,7 +466,7 @@ export const PsychologyView: React.FC = () => {
             )}
           </div>
 
-          <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 space-y-3">
+          <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 space-y-3.5">
             <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
               Recent Assessments ({psychologyAssessments.length})
             </h2>
@@ -391,6 +493,125 @@ export const PsychologyView: React.FC = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Trade-Linked Behavioural & Mistake Impact Analysis */}
+      <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <Activity className="w-4 h-4 text-blue-500" />
+          <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+            Trade-Linked Behavioural Impact Analysis
+          </h2>
+        </div>
+
+        {behaviouralCorrelation.totalClosed === 0 ? (
+          <p className="text-xs text-slate-500 py-4">
+            Close trades with execution emotions or linked psychology assessments to quantify how mindset and plan adherence affect your P/L.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 text-xs">
+            <div className="lg:col-span-5 space-y-3.5">
+              <div className="text-xs font-medium text-slate-500">Plan Adherence vs Deviation</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 space-y-1.5">
+                  <div className="text-slate-500">Plan Followed</div>
+                  <div className="text-lg font-bold font-mono tabular-nums text-emerald-500">
+                    {behaviouralCorrelation.planFollowed.winRate}% WR
+                  </div>
+                  <div className="font-mono text-slate-700 dark:text-slate-200">
+                    {formatCurrency(behaviouralCorrelation.planFollowed.netPnl, currency)}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {behaviouralCorrelation.planFollowed.count} closed trades
+                  </div>
+                </div>
+                <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 space-y-1.5">
+                  <div className="text-slate-500">Plan Deviated</div>
+                  <div className="text-lg font-bold font-mono tabular-nums text-amber-500">
+                    {behaviouralCorrelation.planDeviated.winRate}% WR
+                  </div>
+                  <div className="font-mono text-slate-700 dark:text-slate-200">
+                    {formatCurrency(behaviouralCorrelation.planDeviated.netPnl, currency)}
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    {behaviouralCorrelation.planDeviated.count} closed trades
+                  </div>
+                </div>
+              </div>
+
+              {behaviouralCorrelation.byMistake.length > 0 && (
+                <div className="pt-2 space-y-2">
+                  <div className="text-xs font-medium text-slate-500">Recurring Execution Mistakes</div>
+                  <div className="space-y-1.5">
+                    {behaviouralCorrelation.byMistake.map((m) => (
+                      <div
+                        key={m.tag}
+                        className="p-2.5 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 flex items-center justify-between"
+                      >
+                        <span className="font-medium text-amber-500">
+                          {m.tag} ({m.count}x)
+                        </span>
+                        <span
+                          className={`font-mono font-semibold ${
+                            m.netPnl >= 0 ? 'text-emerald-500' : 'text-red-500'
+                          }`}
+                        >
+                          {formatCurrency(m.netPnl, currency)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="lg:col-span-7">
+              <div className="text-xs font-medium text-slate-500 mb-2.5">
+                Performance by Emotional State
+              </div>
+              {behaviouralCorrelation.byEmotion.length === 0 ? (
+                <p className="text-xs text-slate-500 py-6">
+                  Tag emotions when logging trades or link psychology assessments to trades to populate emotional correlation metrics.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500">
+                        <th className="pb-2">Emotional State</th>
+                        <th className="pb-2 text-right">Trades</th>
+                        <th className="pb-2 text-right">Win Rate</th>
+                        <th className="pb-2 text-right">Avg R</th>
+                        <th className="pb-2 text-right">Net P/L</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                      {behaviouralCorrelation.byEmotion.map((row) => (
+                        <tr key={row.emotion}>
+                          <td className="py-2 capitalize font-medium text-slate-800 dark:text-slate-200">
+                            {row.emotion}
+                          </td>
+                          <td className="py-2 text-right font-mono tabular-nums">{row.trades}</td>
+                          <td className="py-2 text-right font-mono tabular-nums">{row.winRate}%</td>
+                          <td className="py-2 text-right font-mono tabular-nums">
+                            {row.avgR !== null ? `${row.avgR}R` : '—'}
+                          </td>
+                          <td
+                            className={`py-2 text-right font-mono tabular-nums font-semibold ${
+                              row.netPnl >= 0 ? 'text-emerald-500' : 'text-red-500'
+                            }`}
+                          >
+                            {formatCurrency(row.netPnl, currency)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -65,7 +65,7 @@ export interface TradingAccount {
   name: string;
   currency: 'USD' | 'EUR' | 'GBP' | 'JPY' | 'AUD' | 'CAD' | 'CHF';
   brokerName?: string;
-  accountType: 'demo' | 'live' | 'prop_challenge' | 'funded';
+  accountType: 'cent' | 'standard' | 'demo' | 'live' | 'prop_challenge' | 'funded';
   initialBalance: number;
   currentBalance: number;
   isDefault: boolean;
@@ -111,6 +111,11 @@ export interface TradeRecord {
   status: TradeStatus;
   openedAt: string;
   closedAt?: string;
+  timeframe?: string;
+  setupGrade?: 'A+' | 'A' | 'B' | 'C';
+  emotionTag?: EmotionalState;
+  mistakeTags?: string[];
+  partialCloseNotes?: string;
   entryJustification?: string;
   exitJustification?: string;
   observations?: string;

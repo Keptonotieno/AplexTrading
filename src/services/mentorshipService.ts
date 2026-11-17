@@ -18,6 +18,8 @@ import {
   computePortfolioMetrics,
   DEFAULT_RISK_POLICY,
   DEFAULT_SYSTEM_SETTINGS,
+  formatAccountTypeLabel,
+  getMinimumInitialBalance,
   round2,
 } from '../lib/forexCalculations';
 import type {
@@ -106,6 +108,14 @@ export async function completeStudentOnboarding(params: {
     updatedAt: tsNow(),
   });
 
+  const minBal = getMinimumInitialBalance(params.initialAccountType);
+  const parsedBalance = round2(Number(params.initialBalance) || 0);
+  if (parsedBalance < minBal) {
+    throw new Error(
+      `${formatAccountTypeLabel(params.initialAccountType)} accounts require a minimum starting balance of $${minBal}.`
+    );
+  }
+
   const accountDoc: Record<string, unknown> = cleanPayload({
     id: accountId,
     userId: params.uid,
@@ -113,8 +123,8 @@ export async function completeStudentOnboarding(params: {
     currency: params.initialCurrency,
     brokerName: truncateStr(params.brokerName, 80),
     accountType: params.initialAccountType,
-    initialBalance: Math.max(0, Number(params.initialBalance) || 0),
-    currentBalance: Math.max(0, Number(params.initialBalance) || 0),
+    initialBalance: parsedBalance,
+    currentBalance: parsedBalance,
     isDefault: true,
     createdAt: tsNow(),
     updatedAt: tsNow(),
@@ -261,7 +271,13 @@ export async function createTradingAccount(params: {
   isDefault: boolean;
 }) {
   const id = generateSafeId('acct');
-  const bal = Math.max(0, round2(params.initialBalance));
+  const minBal = getMinimumInitialBalance(params.accountType);
+  const bal = round2(Number(params.initialBalance) || 0);
+  if (bal < minBal) {
+    throw new Error(
+      `${formatAccountTypeLabel(params.accountType)} accounts require a minimum starting balance of $${minBal}.`
+    );
+  }
   try {
     await setDoc(
       doc(db, 'tradingAccounts', id),
@@ -353,6 +369,11 @@ export async function saveTradeRecord(params: {
     status: TradeRecord['status'];
     openedAt: string;
     closedAt?: string;
+    timeframe?: string;
+    setupGrade?: TradeRecord['setupGrade'];
+    emotionTag?: TradeRecord['emotionTag'];
+    mistakeTags?: string[];
+    partialCloseNotes?: string;
     entryJustification?: string;
     exitJustification?: string;
     observations?: string;
@@ -377,6 +398,7 @@ export async function saveTradeRecord(params: {
     commission: form.commission,
     swap: form.swap,
     grossPnlOverride: form.grossPnlOverride,
+    accountType: account.accountType,
   });
 
   const violationsTriggered: string[] = [];
@@ -440,6 +462,11 @@ export async function saveTradeRecord(params: {
     status: form.status,
     openedAt: form.openedAt.slice(0, 40),
     closedAt: form.closedAt ? form.closedAt.slice(0, 40) : undefined,
+    timeframe: truncateStr(form.timeframe, 20),
+    setupGrade: form.setupGrade,
+    emotionTag: form.emotionTag,
+    mistakeTags: form.mistakeTags ? form.mistakeTags.slice(0, 8) : undefined,
+    partialCloseNotes: truncateStr(form.partialCloseNotes, 500),
     entryJustification: truncateStr(form.entryJustification, 2000),
     exitJustification: truncateStr(form.exitJustification, 2000),
     observations: truncateStr(form.observations, 2000),
@@ -605,9 +632,41 @@ export async function saveTradeScreenshot(params: {
   }
 }
 
-export async function deleteTradeScreenshot(screenshotId: string) {
+export async function updateTradeScreenshotNotes(params: {
+  screenshotId: string;
+  stage: TradeScreenshot['stage'];
+  caption?: string;
+  marketStructureNotes?: string;
+}) {
+  try {
+    await updateDoc(doc(db, 'tradeScreenshots', params.screenshotId), {
+      stage: params.stage,
+      caption: truncateStr(params.caption, 400) || '',
+      marketStructureNotes: truncateStr(params.marketStructureNotes, 1500) || '',
+    });
+    await logAuditEvent({
+      action: 'trade_screenshot_updated',
+      targetType: 'tradeScreenshot',
+      targetId: params.screenshotId,
+      details: `Updated screenshot stage (${params.stage}) and technical notes`,
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `tradeScreenshots/${params.screenshotId}`);
+  }
+}
+
+export async function deleteTradeScreenshot(screenshotId: string, imageUrl?: string) {
   try {
     await deleteDoc(doc(db, 'tradeScreenshots', screenshotId));
+    if (imageUrl && imageUrl.startsWith('/api/screenshots/')) {
+      const token = await auth.currentUser?.getIdToken().catch(() => null);
+      if (token) {
+        await fetch(imageUrl, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+      }
+    }
     await logAuditEvent({
       action: 'trade_screenshot_deleted',
       targetType: 'tradeScreenshot',

@@ -603,7 +603,7 @@ export const AdminReportsView: React.FC = () => {
           />
 
           {targetMetrics && (
-            <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E] grid grid-cols-3 gap-2 font-mono">
+            <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200/70 dark:border-slate-800 grid grid-cols-2 sm:grid-cols-3 gap-3 font-mono">
               <div>Trades: {targetMetrics.closedTradesCount}</div>
               <div>Win Rate: {targetMetrics.winRate}%</div>
               <div>Growth: {targetMetrics.accountGrowthPercent}%</div>

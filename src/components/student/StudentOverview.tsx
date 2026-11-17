@@ -4,14 +4,12 @@ import {
   ArrowDown,
   ArrowUp,
   BarChart3,
-  CheckCircle2,
+  BrainCircuit,
   ClipboardCheck,
   FileBarChart,
   ImagePlus,
   PlusCircle,
-  Scale,
   ShieldCheck,
-  TrendingDown,
   TrendingUp,
   Trophy,
 } from 'lucide-react';
@@ -27,7 +25,12 @@ import {
 } from 'recharts';
 import { useMentorship } from '../../context/MentorshipContext';
 import { formatFirestoreDate } from '../../lib/firestore-helpers';
-import { formatCurrency, formatPlainCurrency } from '../../lib/forexCalculations';
+import {
+  computeChallengeProgress,
+  computeManualRecordInsights,
+  formatCurrency,
+  formatPlainCurrency,
+} from '../../lib/forexCalculations';
 import type { StudentTab } from '../AppShell';
 
 interface Props {
@@ -41,8 +44,11 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
     userAccount,
     activeAccount,
     trades,
+    psychologyAssessments,
     metrics,
     challengeCycles,
+    myChallenges,
+    riskPolicy,
     tradeReviews,
     myMentorReviews,
     theme,
@@ -60,12 +66,39 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
   );
 
   const cycleStats = useMemo(() => {
-    if (!activeCycle) return { day: 0, total: 30, percent: 0 };
-    const start = new Date(activeCycle.startDate).getTime();
-    const total = activeCycle.durationDays || 30;
-    const day = Math.max(1, Math.min(total, Math.floor((Date.now() - start) / 86400000) + 1));
-    return { day, total, percent: Math.round((day / total) * 100) };
-  }, [activeCycle]);
+    if (!activeCycle) {
+      return { day: 0, total: 30, percent: 0, targetCompletion: 0, growthPercent: 0, enrolled: false };
+    }
+    const participation = myChallenges.find((p) => p.cycleId === activeCycle.id);
+    const report = computeChallengeProgress({
+      cycle: activeCycle,
+      participation,
+      account: activeAccount ?? undefined,
+      trades,
+      riskPolicy,
+    });
+    const percent = participation
+      ? report.targetCompletionPercent
+      : Math.round((report.daysElapsed / (activeCycle.durationDays || 30)) * 100);
+    return {
+      day: report.daysElapsed,
+      total: activeCycle.durationDays || 30,
+      percent: Math.round(percent),
+      targetCompletion: report.targetCompletionPercent,
+      growthPercent: report.growthPercent,
+      enrolled: Boolean(participation),
+    };
+  }, [activeCycle, myChallenges, activeAccount, trades, riskPolicy]);
+
+  const recordInsights = useMemo(
+    () =>
+      computeManualRecordInsights({
+        trades,
+        assessments: psychologyAssessments,
+        riskPolicy,
+      }),
+    [trades, psychologyAssessments, riskPolicy]
+  );
 
   const chartData = useMemo(() => {
     const cutoffDays = range === '7d' ? 7 : range === '30d' ? 30 : range === '90d' ? 90 : null;
@@ -119,15 +152,15 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
       : 'text-red-500';
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 md:space-y-7">
       {/* Welcome Banner with integrated Candlestick Chart Artwork */}
       <section className="relative overflow-hidden rounded-xl bg-gradient-to-r from-[#0C1425] via-[#0F1B33] to-[#0A1324] border border-slate-800/80 px-6 py-7 md:px-8 md:py-8 text-white">
-        <div className="relative z-10 max-w-xl space-y-1.5">
+        <div className="relative z-10 max-w-xl space-y-2">
           <h1 className="text-2xl md:text-3xl font-bold tracking-tight [text-wrap:balance]">
             Welcome back, <span className="text-blue-400">{firstName}</span>!
           </h1>
-          <p className="text-sm text-slate-300">
-            Stay disciplined. Track your progress. Become a consistent trader.
+          <p className="text-sm text-slate-300 leading-relaxed">
+            Stay disciplined. Track your manual trade records. Become a consistent trader.
           </p>
         </div>
 
@@ -191,15 +224,15 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
       </section>
 
       {/* 4-Column KPI Strip */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 md:gap-5">
-        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 flex items-center gap-4">
+      <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 flex items-center gap-4">
           <div className="w-11 h-11 rounded-lg bg-emerald-500/12 text-emerald-500 flex items-center justify-center shrink-0">
             <TrendingUp className="w-5 h-5" />
           </div>
-          <div className="min-w-0">
-            <div className="text-xs text-slate-500 dark:text-slate-400">Account Growth</div>
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <div className="text-xs font-medium text-slate-500 dark:text-slate-400">Account Growth</div>
             <div
-              className={`text-xl font-bold font-mono tabular-nums ${
+              className={`text-2xl font-bold font-mono tabular-nums tracking-tight ${
                 metrics.accountGrowthPercent >= 0 ? 'text-emerald-500' : 'text-red-500'
               }`}
             >
@@ -212,13 +245,13 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
           </div>
         </div>
 
-        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 flex items-center gap-4">
+        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 flex items-center gap-4">
           <div className="w-11 h-11 rounded-lg bg-amber-500/12 text-amber-500 flex items-center justify-center shrink-0">
             <Trophy className="w-5 h-5" />
           </div>
-          <div className="min-w-0">
-            <div className="text-xs text-slate-500 dark:text-slate-400">Win Rate</div>
-            <div className="text-xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <div className="text-xs font-medium text-slate-500 dark:text-slate-400">Win Rate</div>
+            <div className="text-2xl font-bold font-mono tabular-nums tracking-tight text-slate-900 dark:text-white">
               {metrics.winRate.toFixed(1)}%
             </div>
             <div className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
@@ -227,45 +260,48 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
           </div>
         </div>
 
-        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 flex items-center gap-4">
+        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 flex items-center gap-4">
           <div className="w-11 h-11 rounded-lg bg-blue-500/12 text-blue-500 flex items-center justify-center shrink-0">
             <ShieldCheck className="w-5 h-5" />
           </div>
-          <div className="min-w-0">
-            <div className="text-xs text-slate-500 dark:text-slate-400">Risk Compliance</div>
-            <div className={`text-xl font-bold font-mono tabular-nums ${complianceTone}`}>
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <div className="text-xs font-medium text-slate-500 dark:text-slate-400">Risk Compliance</div>
+            <div className={`text-2xl font-bold font-mono tabular-nums tracking-tight ${complianceTone}`}>
               {metrics.riskComplianceRate.toFixed(0)}%
             </div>
-            <div className={`text-xs font-medium ${complianceTone}`}>{complianceLabel}</div>
+            <div className="text-xs font-mono text-slate-500 dark:text-slate-400">
+              <span className={`font-sans font-medium ${complianceTone}`}>{complianceLabel}</span> · Daily {metrics.dailyLossPercent.toFixed(1)}%/{riskPolicy.maxDailyLossPercent}%
+            </div>
           </div>
         </div>
 
-        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 flex items-center gap-4">
+        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 flex items-center gap-4">
           <div className="w-11 h-11 rounded-lg bg-blue-600/12 text-blue-500 flex items-center justify-center shrink-0">
             <BarChart3 className="w-5 h-5" />
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-xs text-slate-500 dark:text-slate-400">Challenge Progress</div>
-            <div className="text-xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">
+          <div className="flex-1 min-w-0 space-y-1">
+            <div className="text-xs font-medium text-slate-500 dark:text-slate-400">Challenge Progress</div>
+            <div className="text-2xl font-bold font-mono tabular-nums tracking-tight text-slate-900 dark:text-white">
               {activeCycle ? `${cycleStats.percent}%` : '—'}
             </div>
             {activeCycle ? (
-              <div className="space-y-1 mt-1">
+              <div className="space-y-1.5">
                 <div className="h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
                   <div
                     className="h-full bg-blue-500 rounded-full"
                     style={{ width: `${cycleStats.percent}%` }}
                   />
                 </div>
-                <div className="text-[11px] font-mono tabular-nums text-slate-500 dark:text-slate-400">
+                <div className="text-xs font-mono tabular-nums text-slate-500 dark:text-slate-400">
                   Day {cycleStats.day} / {cycleStats.total}
+                  {cycleStats.enrolled ? ` · ${cycleStats.growthPercent >= 0 ? '+' : ''}${cycleStats.growthPercent}%` : ''}
                 </div>
               </div>
             ) : (
               <button
                 type="button"
                 onClick={() => onNavigate('challenges')}
-                className="text-xs text-blue-500 hover:underline mt-0.5"
+                className="text-xs text-blue-500 hover:underline"
               >
                 Explore Challenges →
               </button>
@@ -275,10 +311,10 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
       </section>
 
       {/* Middle Split: Performance Overview (8 cols) + Quick Actions (4 cols) */}
-      <section className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+      <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
         {/* Performance Overview Chart */}
-        <div className="lg:col-span-8 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 flex flex-col justify-between">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="lg:col-span-8 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-6 flex flex-col justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
             <h2 className="text-base font-semibold text-slate-900 dark:text-white">
               Performance Overview
             </h2>
@@ -297,7 +333,7 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
                 aria-label="Performance timeframe"
                 value={range}
                 onChange={(e) => setRange(e.target.value as typeof range)}
-                className="px-2.5 py-1.5 text-xs font-medium rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none"
+                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none"
               >
                 <option value="7d">Last 7 Days</option>
                 <option value="30d">Last 30 Days</option>
@@ -370,13 +406,13 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
                 <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
                   Your Equity Curve Appears Here
                 </p>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-sm">
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-sm leading-relaxed">
                   Log closed trades or capital transactions to plot real equity growth and balance history.
                 </p>
                 <button
                   type="button"
                   onClick={onOpenNewTrade}
-                  className="mt-3 px-3.5 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                  className="mt-3 px-4 py-2 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
                 >
                   Log First Trade
                 </button>
@@ -386,7 +422,7 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
         </div>
 
         {/* Quick Actions */}
-        <div className="lg:col-span-4 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 flex flex-col justify-between">
+        <div className="lg:col-span-4 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-6 flex flex-col justify-between">
           <h2 className="text-base font-semibold text-slate-900 dark:text-white mb-4">
             Quick Actions
           </h2>
@@ -394,7 +430,7 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
             <button
               type="button"
               onClick={onOpenNewTrade}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-slate-50 dark:bg-[#162033] hover:bg-slate-100 dark:hover:bg-[#1C2942] border border-slate-200 dark:border-slate-800 text-sm font-medium text-slate-800 dark:text-slate-100 transition-colors text-left"
+              className="w-full flex items-center gap-3.5 px-4 py-3 rounded-lg bg-slate-50 dark:bg-[#162033] hover:bg-slate-100 dark:hover:bg-[#1C2942] border border-slate-200 dark:border-slate-800 text-sm font-medium text-slate-800 dark:text-slate-100 transition-colors text-left"
             >
               <span className="w-8 h-8 rounded-lg bg-blue-600/15 text-blue-500 flex items-center justify-center shrink-0">
                 <PlusCircle className="w-4 h-4" />
@@ -405,7 +441,7 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
             <button
               type="button"
               onClick={() => onNavigate('analysis')}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-slate-50 dark:bg-[#162033] hover:bg-slate-100 dark:hover:bg-[#1C2942] border border-slate-200 dark:border-slate-800 text-sm font-medium text-slate-800 dark:text-slate-100 transition-colors text-left"
+              className="w-full flex items-center gap-3.5 px-4 py-3 rounded-lg bg-slate-50 dark:bg-[#162033] hover:bg-slate-100 dark:hover:bg-[#1C2942] border border-slate-200 dark:border-slate-800 text-sm font-medium text-slate-800 dark:text-slate-100 transition-colors text-left"
             >
               <span className="w-8 h-8 rounded-lg bg-cyan-500/15 text-cyan-500 flex items-center justify-center shrink-0">
                 <ImagePlus className="w-4 h-4" />
@@ -416,7 +452,7 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
             <button
               type="button"
               onClick={() => onNavigate('psychology')}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-slate-50 dark:bg-[#162033] hover:bg-slate-100 dark:hover:bg-[#1C2942] border border-slate-200 dark:border-slate-800 text-sm font-medium text-slate-800 dark:text-slate-100 transition-colors text-left"
+              className="w-full flex items-center gap-3.5 px-4 py-3 rounded-lg bg-slate-50 dark:bg-[#162033] hover:bg-slate-100 dark:hover:bg-[#1C2942] border border-slate-200 dark:border-slate-800 text-sm font-medium text-slate-800 dark:text-slate-100 transition-colors text-left"
             >
               <span className="w-8 h-8 rounded-lg bg-amber-500/15 text-amber-500 flex items-center justify-center shrink-0">
                 <ClipboardCheck className="w-4 h-4" />
@@ -427,7 +463,7 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
             <button
               type="button"
               onClick={() => onNavigate('reports')}
-              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-slate-50 dark:bg-[#162033] hover:bg-slate-100 dark:hover:bg-[#1C2942] border border-slate-200 dark:border-slate-800 text-sm font-medium text-slate-800 dark:text-slate-100 transition-colors text-left"
+              className="w-full flex items-center gap-3.5 px-4 py-3 rounded-lg bg-slate-50 dark:bg-[#162033] hover:bg-slate-100 dark:hover:bg-[#1C2942] border border-slate-200 dark:border-slate-800 text-sm font-medium text-slate-800 dark:text-slate-100 transition-colors text-left"
             >
               <span className="w-8 h-8 rounded-lg bg-indigo-500/15 text-indigo-400 flex items-center justify-center shrink-0">
                 <FileBarChart className="w-4 h-4" />
@@ -438,182 +474,257 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
         </div>
       </section>
 
-      {/* Bottom 3-Column Row: Recent Trades + Your Stats + Mentor Feedback */}
-      <section className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+      {/* Spacious Row 1: Recent Trades (7 cols) + Your Stats (5 cols) */}
+      <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
         {/* Recent Trades */}
-        <div className="lg:col-span-5 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Recent Trades</h2>
-            <button
-              type="button"
-              onClick={() => onNavigate('journal')}
-              className="text-xs font-medium text-blue-500 hover:underline whitespace-nowrap"
-            >
-              View All →
-            </button>
-          </div>
-
-          {recentTrades.length === 0 ? (
-            <div className="py-8 text-center text-xs text-slate-500 dark:text-slate-400">
-              No trades logged yet. Use <span className="font-medium text-blue-500">Add New Trade</span> to record your first setup.
+        <div className="lg:col-span-7 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-6 flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between gap-4 mb-4">
+              <h2 className="text-base font-semibold text-slate-900 dark:text-white">Recent Trades</h2>
+              <button
+                type="button"
+                onClick={() => onNavigate('journal')}
+                className="text-xs font-medium text-blue-500 hover:underline whitespace-nowrap shrink-0"
+              >
+                View All →
+              </button>
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-200 dark:border-slate-800 text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                    <th className="pb-2 pr-2">Instrument</th>
-                    <th className="pb-2 px-2">Direction</th>
-                    <th className="pb-2 px-2 text-right">P/L</th>
-                    <th className="pb-2 px-2">Status</th>
-                    <th className="pb-2 pl-2 text-right">Date</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-xs">
-                  {recentTrades.map((t) => {
-                    const isBuy = t.direction === 'BUY';
-                    const pnl = t.netPnl;
-                    return (
-                      <tr
-                        key={t.id}
-                        onClick={() => onNavigate('journal')}
-                        className="hover:bg-slate-50 dark:hover:bg-slate-800/40 cursor-pointer transition-colors"
-                      >
-                        <td className="py-2.5 pr-2 font-mono font-semibold text-slate-900 dark:text-white">
-                          {t.instrument}
-                        </td>
-                        <td className="py-2.5 px-2">
-                          <span
-                            className={`inline-flex items-center gap-1 font-medium ${
-                              isBuy ? 'text-emerald-500' : 'text-red-500'
+
+            {recentTrades.length === 0 ? (
+              <div className="py-10 text-center text-sm text-slate-500 dark:text-slate-400">
+                No trades logged yet. Use <span className="font-medium text-blue-500">Add New Trade</span> to record your first setup.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-500 dark:text-slate-400">
+                      <th className="pb-3 pr-3">Instrument</th>
+                      <th className="pb-3 px-3">Direction</th>
+                      <th className="pb-3 px-3 text-right">P/L</th>
+                      <th className="pb-3 px-3">Status</th>
+                      <th className="pb-3 pl-3 text-right">Date</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-xs md:text-[13px]">
+                    {recentTrades.map((t) => {
+                      const isBuy = t.direction === 'BUY';
+                      const pnl = t.netPnl;
+                      return (
+                        <tr
+                          key={t.id}
+                          onClick={() => onNavigate('journal')}
+                          className="hover:bg-slate-50 dark:hover:bg-slate-800/40 cursor-pointer transition-colors"
+                        >
+                          <td className="py-3 pr-3 font-mono font-semibold text-slate-900 dark:text-white whitespace-nowrap">
+                            {t.instrument}
+                          </td>
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <span
+                              className={`inline-flex items-center gap-1 font-medium ${
+                                isBuy ? 'text-emerald-500' : 'text-red-500'
+                              }`}
+                            >
+                              {isBuy ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />}
+                              {isBuy ? 'Buy' : 'Sell'}
+                            </span>
+                          </td>
+                          <td
+                            className={`py-3 px-3 text-right font-mono tabular-nums font-semibold whitespace-nowrap ${
+                              pnl === undefined
+                                ? 'text-slate-400'
+                                : pnl >= 0
+                                ? 'text-emerald-500'
+                                : 'text-red-500'
                             }`}
                           >
-                            {isBuy ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
-                            {isBuy ? 'Buy' : 'Sell'}
-                          </span>
-                        </td>
-                        <td
-                          className={`py-2.5 px-2 text-right font-mono tabular-nums font-medium ${
-                            pnl === undefined
-                              ? 'text-slate-400'
-                              : pnl >= 0
-                              ? 'text-emerald-500'
-                              : 'text-red-500'
-                          }`}
-                        >
-                          {pnl !== undefined ? formatCurrency(pnl, currency) : '—'}
-                        </td>
-                        <td className="py-2.5 px-2 capitalize text-slate-600 dark:text-slate-300">
-                          {t.status}
-                        </td>
-                        <td className="py-2.5 pl-2 text-right font-mono tabular-nums text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                          {formatFirestoreDate(t.openedAt)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                            {pnl !== undefined ? formatCurrency(pnl, currency) : '—'}
+                          </td>
+                          <td className="py-3 px-3 capitalize text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                            {t.status}
+                          </td>
+                          <td className="py-3 pl-3 text-right font-mono tabular-nums text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                            {formatFirestoreDate(t.openedAt)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Your Stats (2x2 clean grid, single elevation) */}
-        <div className="lg:col-span-4 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6">
-          <div className="flex items-center justify-between mb-3">
+        {/* Your Stats: Spacious 2x2 Hairline-Divided Metric Grid (zero squeezing or clipping) */}
+        <div className="lg:col-span-5 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-6 flex flex-col justify-between">
+          <div className="flex items-center justify-between gap-4 mb-4">
             <h2 className="text-base font-semibold text-slate-900 dark:text-white">Your Stats</h2>
             <button
               type="button"
               onClick={() => onNavigate('analytics')}
-              className="text-xs font-medium text-blue-500 hover:underline whitespace-nowrap"
+              className="text-xs font-medium text-blue-500 hover:underline whitespace-nowrap shrink-0"
             >
               View Details →
             </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E] flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-blue-500/15 text-blue-500 flex items-center justify-center shrink-0">
-                <BarChart3 className="w-4 h-4" />
+          <div className="grid grid-cols-1 sm:grid-cols-2 border-t border-slate-200 dark:border-slate-800 flex-1">
+            <div className="py-4 sm:pr-5 border-b border-slate-200 dark:border-slate-800 sm:border-r space-y-1.5">
+              <div className="text-xs font-medium text-slate-500 dark:text-slate-400">Total Trades</div>
+              <div className="text-2xl font-bold font-mono tabular-nums tracking-tight text-slate-900 dark:text-white">
+                {metrics.totalTrades}
               </div>
-              <div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">Total Trades</div>
-                <div className="text-lg font-bold font-mono tabular-nums text-slate-900 dark:text-white">
-                  {metrics.totalTrades}
-                </div>
+              <div className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                {metrics.closedTradesCount} closed · {metrics.openTradesCount} open
               </div>
             </div>
 
-            <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E] flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-emerald-500/15 text-emerald-500 flex items-center justify-center shrink-0">
-                <CheckCircle2 className="w-4 h-4" />
+            <div className="py-4 sm:pl-5 border-b border-slate-200 dark:border-slate-800 space-y-1.5">
+              <div className="text-xs font-medium text-slate-500 dark:text-slate-400">Net Profit</div>
+              <div
+                className={`text-2xl font-bold font-mono tabular-nums tracking-tight whitespace-nowrap ${
+                  metrics.netPnl >= 0 ? 'text-emerald-500' : 'text-red-500'
+                }`}
+              >
+                {formatCurrency(metrics.netPnl, currency)}
               </div>
-              <div className="min-w-0">
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">Net Profit</div>
-                <div
-                  className={`text-lg font-bold font-mono tabular-nums truncate ${
-                    metrics.netPnl >= 0 ? 'text-emerald-500' : 'text-red-500'
-                  }`}
-                >
-                  {formatCurrency(metrics.netPnl, currency)}
-                </div>
+              <div className="text-xs text-slate-500 dark:text-slate-400 font-mono">
+                Balance: {formatPlainCurrency(metrics.currentAccountBalance, currency)}
               </div>
             </div>
 
-            <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E] flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-red-500/15 text-red-500 flex items-center justify-center shrink-0">
-                <TrendingDown className="w-4 h-4" />
+            <div className="py-4 sm:pr-5 border-b sm:border-b-0 border-slate-200 dark:border-slate-800 sm:border-r space-y-1.5">
+              <div className="text-xs font-medium text-slate-500 dark:text-slate-400">Max Drawdown</div>
+              <div className="text-2xl font-bold font-mono tabular-nums tracking-tight text-slate-900 dark:text-white">
+                {metrics.maxDrawdownPercent.toFixed(1)}%
               </div>
-              <div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">Max Drawdown</div>
-                <div className="text-lg font-bold font-mono tabular-nums text-slate-900 dark:text-white">
-                  {metrics.maxDrawdownPercent.toFixed(1)}%
-                </div>
+              <div className="text-xs font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                Current: {metrics.currentDrawdownPercent.toFixed(1)}%
               </div>
             </div>
 
-            <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E] flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-indigo-500/15 text-indigo-400 flex items-center justify-center shrink-0">
-                <Scale className="w-4 h-4" />
+            <div className="py-4 sm:pl-5 space-y-1.5">
+              <div className="text-xs font-medium text-slate-500 dark:text-slate-400">Avg. R-Multiple</div>
+              <div className="text-2xl font-bold font-mono tabular-nums tracking-tight text-slate-900 dark:text-white">
+                {metrics.avgRMultiple !== null ? `${metrics.avgRMultiple.toFixed(2)}R` : '—'}
               </div>
-              <div>
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">Avg. R-Multiple</div>
-                <div className="text-lg font-bold font-mono tabular-nums text-slate-900 dark:text-white">
-                  {metrics.avgRMultiple !== null ? metrics.avgRMultiple.toFixed(2) : '—'}
-                </div>
+              <div className="text-xs font-mono text-slate-500 dark:text-slate-400">
+                Expectancy: {formatCurrency(metrics.expectancy, currency)}
               </div>
             </div>
           </div>
         </div>
+      </section>
+
+      {/* Spacious Row 2: Record Intelligence & Setup Prediction (7 cols) + Mentor Feedback (5 cols) */}
+      <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+        <div className="lg:col-span-7 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-6 flex flex-col justify-between space-y-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <BrainCircuit className="w-4 h-4 text-blue-500 shrink-0" />
+                <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                  Record Reader & Setup Prediction
+                </h2>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Learns directly from your manual trade entries & psychology logs · {recordInsights.readinessLabel}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigate('analytics')}
+              className="text-xs font-medium text-blue-500 hover:underline whitespace-nowrap shrink-0"
+            >
+              Open Full Prediction Engine →
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            <p className="text-sm font-medium text-slate-800 dark:text-slate-100 leading-relaxed">
+              {recordInsights.predictionHeadline}
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 border-y border-slate-200 dark:border-slate-800 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 dark:divide-slate-800">
+              <div className="py-3 sm:pr-4 space-y-1">
+                <div className="text-xs text-slate-500 dark:text-slate-400">Projected Hit Rate</div>
+                <div className="text-lg font-bold font-mono tabular-nums text-blue-500">
+                  {recordInsights.predictedNextWinRate !== null
+                    ? `${recordInsights.predictedNextWinRate}%`
+                    : 'Building'}
+                </div>
+                <div className="text-xs font-mono text-slate-500">
+                  {recordInsights.predictedExpectedR !== null
+                    ? `Expected ${recordInsights.predictedExpectedR}R`
+                    : `${recordInsights.closedTradesAnalyzed} closed trades`}
+                </div>
+              </div>
+
+              <div className="py-3 sm:px-4 space-y-1">
+                <div className="text-xs text-slate-500 dark:text-slate-400">Record Quality</div>
+                <div className="text-lg font-bold font-mono tabular-nums text-slate-900 dark:text-white">
+                  {recordInsights.documentationRate}%
+                </div>
+                <div className="text-xs text-slate-500">
+                  Plan adherence {recordInsights.planAdherenceRate}%
+                </div>
+              </div>
+
+              <div className="py-3 sm:pl-4 space-y-1">
+                <div className="text-xs text-slate-500 dark:text-slate-400">Best Session / Mindset</div>
+                <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                  {recordInsights.bestSession
+                    ? `${recordInsights.bestSession.session} (${recordInsights.bestSession.winRate}%)`
+                    : 'Awaiting closed trades'}
+                </div>
+                <div className="text-xs text-slate-500 capitalize">
+                  {recordInsights.bestEmotion
+                    ? `Mindset: ${recordInsights.bestEmotion.emotion}`
+                    : 'Tag emotions when logging'}
+                </div>
+              </div>
+            </div>
+
+            <ul className="space-y-1.5 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              {recordInsights.predictionGuidance.slice(0, 2).map((item, idx) => (
+                <li key={idx} className="flex items-start gap-2">
+                  <span className="text-blue-500 font-bold mt-0.5">·</span>
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
 
         {/* Mentor Feedback */}
-        <div className="lg:col-span-3 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 flex flex-col justify-between">
-          <div className="space-y-3">
+        <div className="lg:col-span-5 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-6 flex flex-col justify-between">
+          <div className="space-y-4">
             <h2 className="text-base font-semibold text-slate-900 dark:text-white">
               Mentor Feedback
             </h2>
 
             {latestFeedback ? (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-full bg-blue-600/20 text-blue-500 flex items-center justify-center text-xs font-bold shrink-0">
+              <div className="space-y-3.5">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-blue-600/20 text-blue-500 flex items-center justify-center text-xs font-bold shrink-0">
                     {latestFeedback.author.slice(0, 2).toUpperCase()}
                   </div>
                   <div className="min-w-0">
-                    <div className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                    <div className="text-sm font-semibold text-slate-900 dark:text-white truncate">
                       {latestFeedback.author}
                     </div>
-                    <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                    <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
                       {latestFeedback.role}
                     </div>
                   </div>
                 </div>
-                <p className="text-xs italic text-slate-600 dark:text-slate-300 leading-relaxed line-clamp-3">
+                <p className="text-sm italic text-slate-600 dark:text-slate-300 leading-relaxed line-clamp-3">
                   “{latestFeedback.quote}”
                 </p>
               </div>
             ) : (
-              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
                 Mentor critiques on your trade setups, chart annotations, and weekly evaluations will appear here as soon as reviewed.
               </p>
             )}
@@ -622,7 +733,7 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
           <button
             type="button"
             onClick={() => onNavigate('analysis')}
-            className="mt-4 w-full py-2 px-3 rounded-lg bg-slate-100 dark:bg-[#162033] hover:bg-slate-200 dark:hover:bg-[#1C2942] border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-800 dark:text-slate-200 transition-colors"
+            className="mt-5 w-full py-2.5 px-4 rounded-lg bg-slate-100 dark:bg-[#162033] hover:bg-slate-200 dark:hover:bg-[#1C2942] border border-slate-200 dark:border-slate-800 text-xs font-medium text-slate-800 dark:text-slate-200 transition-colors"
           >
             View All Feedback →
           </button>

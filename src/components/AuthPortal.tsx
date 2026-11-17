@@ -20,13 +20,18 @@ import {
   ShieldCheck,
   UserPlus,
 } from 'lucide-react';
-import { auth, BOOTSTRAPPED_ADMIN_EMAIL } from '../lib/firebase';
-import { INSTRUMENT_SPECS } from '../lib/forexCalculations';
+import { auth, isAllowedAdminEmail } from '../lib/firebase';
+import {
+  ACCOUNT_TYPE_SPECS,
+  formatAccountTypeLabel,
+  getMinimumInitialBalance,
+  INSTRUMENT_SPECS,
+} from '../lib/forexCalculations';
 import { completeStudentOnboarding } from '../services/mentorshipService';
 import type { StudentProfile, TradingAccount } from '../types/domain';
 import { useMentorship } from '../context/MentorshipContext';
 
-type AuthMode = 'signin' | 'register' | 'reset';
+type AuthMode = 'signin' | 'register' | 'reset' | 'admin';
 
 const POPULAR_INSTRUMENTS = Object.keys(INSTRUMENT_SPECS);
 
@@ -35,6 +40,7 @@ export const AuthPortal: React.FC = () => {
   const [mode, setMode] = useState<AuthMode>('signin');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [providerHelpUrl, setProviderHelpUrl] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   // Sign In / Register credentials
@@ -49,7 +55,7 @@ export const AuthPortal: React.FC = () => {
   const [preferredInstruments, setPreferredInstruments] = useState<string[]>([]);
   const [brokerName, setBrokerName] = useState('');
   const [initialAccountName, setInitialAccountName] = useState('');
-  const [initialAccountType, setInitialAccountType] = useState<TradingAccount['accountType']>('demo');
+  const [initialAccountType, setInitialAccountType] = useState<TradingAccount['accountType']>('standard');
   const [initialCurrency, setInitialCurrency] = useState<TradingAccount['currency']>('USD');
   const [initialBalance, setInitialBalance] = useState('');
 
@@ -64,10 +70,27 @@ export const AuthPortal: React.FC = () => {
     setError(null);
     setNotice(null);
     try {
+      if (mode === 'admin' && typeof window !== 'undefined') {
+        sessionStorage.setItem('fm_requested_admin', '1');
+      } else if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('fm_requested_admin');
+      }
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
-      await signInWithPopup(auth, provider);
+      const cred = await signInWithPopup(auth, provider);
+      if (mode === 'admin') {
+        const token = await cred.user.getIdToken();
+        const verifyRes = await fetch('/api/auth/verify-admin', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!verifyRes.ok) {
+          sessionStorage.removeItem('fm_requested_admin');
+          await signOut(auth);
+          setError('Access Denied: Only authorized Mentor / Administrator accounts can access the Admin Portal.');
+        }
+      }
     } catch (err: unknown) {
+      if (typeof window !== 'undefined') sessionStorage.removeItem('fm_requested_admin');
       const msg = err instanceof Error ? err.message : 'Google sign-in failed.';
       setError(msg);
     } finally {
@@ -79,14 +102,46 @@ export const AuthPortal: React.FC = () => {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setProviderHelpUrl(null);
     setNotice(null);
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), password);
+      if (mode === 'admin' && typeof window !== 'undefined') {
+        sessionStorage.setItem('fm_requested_admin', '1');
+      } else if (typeof window !== 'undefined') {
+        sessionStorage.removeItem('fm_requested_admin');
+      }
+      const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+      if (mode === 'admin') {
+        if (!cred.user.emailVerified) {
+          setError('Your administrator email must be verified before entering the Admin Portal.');
+          return;
+        }
+        const token = await cred.user.getIdToken();
+        const verifyRes = await fetch('/api/auth/verify-admin', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!verifyRes.ok) {
+          sessionStorage.removeItem('fm_requested_admin');
+          await signOut(auth);
+          setError('Access Denied: This account does not hold verified Administrator privileges.');
+        }
+      }
     } catch (err: unknown) {
+      if (typeof window !== 'undefined') sessionStorage.removeItem('fm_requested_admin');
       const code = (err as { code?: string })?.code;
       if (code === 'auth/operation-not-allowed') {
+        setProviderHelpUrl(
+          'https://console.firebase.google.com/project/gen-lang-client-0535362261/authentication/providers'
+        );
         setError(
-          'Email/Password sign-in is not yet enabled in the Firebase Console (Authentication → Sign-in method → Email/Password). Use Google Sign-In below or enable Email/Password in Firebase Console.'
+          'Email/Password login is disabled in your Firebase Console for project gen-lang-client-0535362261. Enable the Email/Password provider in Firebase Authentication (and create the user under Authentication → Users), or click "Admin Sign In with Google" below.'
+        );
+      } else if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
+        setProviderHelpUrl(
+          'https://console.firebase.google.com/project/gen-lang-client-0535362261/authentication/users'
+        );
+        setError(
+          'No matching Firebase Auth Email/Password user found or incorrect password. Confirm the account exists in Firebase Console → Authentication → Users (or register it first on the Register tab).'
         );
       } else {
         setError(err instanceof Error ? err.message : 'Sign-in failed.');
@@ -113,8 +168,11 @@ export const AuthPortal: React.FC = () => {
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code;
       if (code === 'auth/operation-not-allowed') {
+        setProviderHelpUrl(
+          'https://console.firebase.google.com/project/gen-lang-client-0535362261/authentication/providers'
+        );
         setError(
-          'Email/Password registration is not enabled in the Firebase Console (Authentication → Sign-in method → Email/Password). Please sign in using Google Sign-In or enable Email/Password in Firebase Console.'
+          'Email/Password registration is disabled in your Firebase Console for project gen-lang-client-0535362261. Enable Email/Password under Authentication → Sign-in method or sign in with Google.'
         );
       } else {
         setError(err instanceof Error ? err.message : 'Registration failed.');
@@ -150,12 +208,20 @@ export const AuthPortal: React.FC = () => {
       setError('Full name is required.');
       return;
     }
+    const minRequired = getMinimumInitialBalance(initialAccountType);
+    const parsedInitialBalance = Number(initialBalance);
+    if (!Number.isFinite(parsedInitialBalance) || parsedInitialBalance < minRequired) {
+      setError(
+        `${formatAccountTypeLabel(initialAccountType)} accounts require a minimum starting capital of $${minRequired}.00.`
+      );
+      return;
+    }
+
     setBusy(true);
     setError(null);
     try {
       const isMentor =
-        firebaseUser.emailVerified &&
-        firebaseUser.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase();
+        firebaseUser.emailVerified && isAllowedAdminEmail(firebaseUser.email);
 
       await completeStudentOnboarding({
         uid: firebaseUser.uid,
@@ -170,7 +236,7 @@ export const AuthPortal: React.FC = () => {
         initialAccountName: initialAccountName.trim() || 'Primary Trading Account',
         initialAccountType,
         initialCurrency,
-        initialBalance: Math.max(0, Number(initialBalance) || 0),
+        initialBalance: parsedInitialBalance,
         photoUrl: firebaseUser.photoURL || undefined,
       });
     } catch (err: unknown) {
@@ -393,16 +459,18 @@ export const AuthPortal: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1.5">Account Type</label>
+                  <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1.5">Account Tier</label>
                   <select
                     value={initialAccountType}
                     onChange={(e) => setInitialAccountType(e.target.value as TradingAccount['accountType'])}
                     className="w-full px-3.5 py-2 text-sm rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
                   >
-                    <option value="demo">Demo</option>
-                    <option value="live">Live Personal</option>
-                    <option value="prop_challenge">Prop Challenge</option>
-                    <option value="funded">Funded</option>
+                    <option value="standard">Standard Account (Min $50)</option>
+                    <option value="cent">Cent Account (Min $10)</option>
+                    <option value="demo">Demo Practice (Min $10)</option>
+                    <option value="live">Live Standard (Min $50)</option>
+                    <option value="prop_challenge">Prop Challenge (Min $50)</option>
+                    <option value="funded">Funded (Min $50)</option>
                   </select>
                 </div>
                 <div>
@@ -419,18 +487,21 @@ export const AuthPortal: React.FC = () => {
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1.5">
-                    Initial Balance *
+                    Initial Balance * (Min ${getMinimumInitialBalance(initialAccountType)})
                   </label>
                   <input
                     type="number"
-                    min="0"
+                    min={getMinimumInitialBalance(initialAccountType)}
                     step="0.01"
                     required
                     value={initialBalance}
                     onChange={(e) => setInitialBalance(e.target.value)}
-                    placeholder="Enter starting balance"
+                    placeholder={`Minimum $${getMinimumInitialBalance(initialAccountType)}.00 or any higher amount`}
                     className="w-full px-3.5 py-2 text-sm font-mono tabular-nums rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
                   />
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                    {ACCOUNT_TYPE_SPECS[initialAccountType].description}
+                  </p>
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1.5">
@@ -483,8 +554,8 @@ export const AuthPortal: React.FC = () => {
 
       <main className="max-w-5xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 items-center my-8">
         <div className="lg:col-span-6 space-y-5">
-          <p className="text-xs font-medium text-blue-500 tracking-wide">
-            INDEPENDENT TRADING PERFORMANCE SYSTEM
+          <p className="text-xs font-medium text-blue-500">
+            Independent Trading Performance System
           </p>
           <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-slate-900 dark:text-white leading-tight [text-wrap:balance]">
             Discipline, risk clarity, and structured mentorship in one place.
@@ -517,15 +588,16 @@ export const AuthPortal: React.FC = () => {
 
         <div className="lg:col-span-6">
           <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-xl p-6 md:p-7 space-y-5">
-            <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-[#0B111E] rounded-lg">
+            <div className="grid grid-cols-4 gap-1 p-1 bg-slate-100 dark:bg-[#0B111E] rounded-lg">
               <button
                 type="button"
                 onClick={() => {
                   setMode('signin');
                   setError(null);
+                  setProviderHelpUrl(null);
                   setNotice(null);
                 }}
-                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                className={`py-1.5 text-xs font-medium rounded-md transition-colors ${
                   mode === 'signin'
                     ? 'bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-400'
@@ -538,36 +610,79 @@ export const AuthPortal: React.FC = () => {
                 onClick={() => {
                   setMode('register');
                   setError(null);
+                  setProviderHelpUrl(null);
                   setNotice(null);
                 }}
-                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                className={`py-1.5 text-xs font-medium rounded-md transition-colors ${
                   mode === 'register'
                     ? 'bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-400'
                 }`}
               >
-                Register Student
+                Register
               </button>
               <button
                 type="button"
                 onClick={() => {
                   setMode('reset');
                   setError(null);
+                  setProviderHelpUrl(null);
                   setNotice(null);
                 }}
-                className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                className={`py-1.5 text-xs font-medium rounded-md transition-colors ${
                   mode === 'reset'
                     ? 'bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-400'
                 }`}
               >
-                Reset Password
+                Reset
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('admin');
+                  setError(null);
+                  setProviderHelpUrl(null);
+                  setNotice(null);
+                }}
+                className={`py-1.5 text-xs font-medium rounded-md transition-colors flex items-center justify-center gap-1 ${
+                  mode === 'admin'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400'
+                }`}
+              >
+                <Lock className="w-3 h-3" />
+                Admin
               </button>
             </div>
 
+            {mode === 'admin' && (
+              <div className="p-3 rounded-lg bg-blue-600/10 border border-blue-500/20 text-xs text-slate-700 dark:text-slate-200 flex items-start gap-2.5">
+                <Lock className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-semibold text-slate-900 dark:text-white">
+                    Administrator & Mentor Portal Login
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Restricted access. Sign in with your verified administrator credentials to enter the Mentor Command Console.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {error && (
-              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-600 dark:text-red-400">
-                {error}
+              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-600 dark:text-red-400 space-y-2">
+                <p>{error}</p>
+                {providerHelpUrl && (
+                  <a
+                    href={providerHelpUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block font-semibold underline text-red-700 dark:text-red-300"
+                  >
+                    Open Firebase Authentication Settings →
+                  </a>
+                )}
               </div>
             )}
             {notice && (
@@ -588,7 +703,7 @@ export const AuthPortal: React.FC = () => {
                   d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27c3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10c5.35 0 9.25-3.67 9.25-9.09c0-1.15-.15-1.81-.15-1.81Z"
                 />
               </svg>
-              Continue with Google
+              {mode === 'admin' ? 'Admin Sign In with Google' : 'Continue with Google'}
             </button>
 
             <div className="relative flex items-center py-1">
@@ -597,18 +712,18 @@ export const AuthPortal: React.FC = () => {
               <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
             </div>
 
-            {mode === 'signin' && (
+            {(mode === 'signin' || mode === 'admin') && (
               <form onSubmit={handleEmailSignIn} className="space-y-4">
                 <div>
                   <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                    Email Address
+                    {mode === 'admin' ? 'Administrator Email' : 'Email Address'}
                   </label>
                   <input
                     type="email"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="student@domain.com"
+                    placeholder={mode === 'admin' ? 'keptonotieno@gmail.com' : 'student@domain.com'}
                     className="w-full px-3.5 py-2 text-sm rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
@@ -631,7 +746,7 @@ export const AuthPortal: React.FC = () => {
                   className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 text-white text-sm font-medium transition-colors"
                 >
                   <Lock className="w-4 h-4" />
-                  Sign In with Email
+                  {mode === 'admin' ? 'Sign In to Admin Portal' : 'Sign In with Email'}
                 </button>
               </form>
             )}

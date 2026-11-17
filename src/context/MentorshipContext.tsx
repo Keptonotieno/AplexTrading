@@ -10,9 +10,9 @@ import {
 } from 'firebase/firestore';
 import {
   auth,
-  BOOTSTRAPPED_ADMIN_EMAIL,
   db,
   handleFirestoreError,
+  isAllowedAdminEmail,
   OperationType,
 } from '../lib/firebase';
 import {
@@ -218,19 +218,31 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
   const isVerifiedAdmin = Boolean(
     firebaseUser &&
       firebaseUser.emailVerified &&
-      (firebaseUser.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase() || isAdminDoc)
+      (isAllowedAdminEmail(firebaseUser.email) || isAdminDoc)
   );
 
-  // Bootstrap admin defaults when verified admin signs in
+  // Bootstrap admin defaults when verified admin signs in, and honor explicit Admin Portal login intent
   useEffect(() => {
-    if (authReady && firebaseUser && firebaseUser.emailVerified && firebaseUser.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()) {
+    if (authReady && firebaseUser && firebaseUser.emailVerified && isAllowedAdminEmail(firebaseUser.email)) {
       ensureAdminDefaults(
         firebaseUser.uid,
-        firebaseUser.email || BOOTSTRAPPED_ADMIN_EMAIL,
+        firebaseUser.email || 'keptonotieno@gmail.com',
         firebaseUser.displayName || 'Lead Mentor'
       ).catch(() => {});
     }
   }, [authReady, firebaseUser]);
+
+  useEffect(() => {
+    if (!authReady || !firebaseUser) return;
+    if (typeof window !== 'undefined' && sessionStorage.getItem('fm_requested_admin') === '1') {
+      if (isVerifiedAdmin) {
+        sessionStorage.removeItem('fm_requested_admin');
+        setWorkspaceMode('admin');
+      } else if (userAccountChecked) {
+        sessionStorage.removeItem('fm_requested_admin');
+      }
+    }
+  }, [authReady, firebaseUser, isVerifiedAdmin, userAccountChecked]);
 
   // Core user & student listeners (attached only when authReady && firebaseUser && emailVerified)
   useEffect(() => {

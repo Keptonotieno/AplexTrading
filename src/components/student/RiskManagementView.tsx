@@ -6,6 +6,7 @@ import {
   calculatePositionSizing,
   formatCurrency,
   formatPlainCurrency,
+  getAccountContractScale,
   INSTRUMENT_SPECS,
 } from '../../lib/forexCalculations';
 import { acknowledgeViolation } from '../../services/mentorshipService';
@@ -46,8 +47,9 @@ export const RiskManagementView: React.FC = () => {
         entryPrice: Number(entryPrice) || 0,
         stopLoss: Number(stopLoss) || 0,
         takeProfit: takeProfit ? Number(takeProfit) : undefined,
+        accountType: activeAccount?.accountType,
       }),
-    [instrument, direction, balance, riskPercent, entryPrice, stopLoss, takeProfit]
+    [instrument, direction, balance, riskPercent, entryPrice, stopLoss, takeProfit, activeAccount?.accountType]
   );
 
   const spec = INSTRUMENT_SPECS[instrument];
@@ -65,71 +67,166 @@ export const RiskManagementView: React.FC = () => {
         </p>
       </div>
 
-      {/* Live Risk Exposure Gauges */}
+      {/* Live Risk Exposure & Drawdown Gauges */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
-        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-4 space-y-1.5">
-          <div className="flex items-center justify-between text-xs text-slate-500">
-            <span>Today&apos;s Realized Loss</span>
-            <span className="font-mono">Limit: {riskPolicy.maxDailyLossPercent}%</span>
-          </div>
-          <div
-            className={`text-xl font-bold font-mono tabular-nums ${
-              metrics.dailyLossPercent > riskPolicy.maxDailyLossPercent
-                ? 'text-red-500'
-                : 'text-emerald-500'
-            }`}
-          >
-            {metrics.dailyLossPercent.toFixed(2)}%
-          </div>
-        </div>
+        {(() => {
+          const dailyUsedPct =
+            riskPolicy.maxDailyLossPercent > 0
+              ? Math.min(100, (metrics.dailyLossPercent / riskPolicy.maxDailyLossPercent) * 100)
+              : 0;
+          const dailyRemaining = Math.max(0, riskPolicy.maxDailyLossPercent - metrics.dailyLossPercent);
+          const ddUsedPct =
+            riskPolicy.maxDrawdownPercent > 0
+              ? Math.min(100, (metrics.maxDrawdownPercent / riskPolicy.maxDrawdownPercent) * 100)
+              : 0;
+          const ddRemaining = Math.max(0, riskPolicy.maxDrawdownPercent - metrics.maxDrawdownPercent);
+          const openUsedPct =
+            riskPolicy.maxOpenExposurePercent > 0
+              ? Math.min(100, (metrics.openExposurePercent / riskPolicy.maxOpenExposurePercent) * 100)
+              : 0;
+          const streakPct =
+            riskPolicy.maxConsecutiveLosses > 0
+              ? Math.min(100, (metrics.currentConsecutiveLosses / riskPolicy.maxConsecutiveLosses) * 100)
+              : 0;
 
-        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-4 space-y-1.5">
-          <div className="flex items-center justify-between text-xs text-slate-500">
-            <span>Open Risk Exposure</span>
-            <span className="font-mono">Limit: {riskPolicy.maxOpenExposurePercent}%</span>
-          </div>
-          <div
-            className={`text-xl font-bold font-mono tabular-nums ${
-              metrics.openExposurePercent > riskPolicy.maxOpenExposurePercent
-                ? 'text-amber-500'
-                : 'text-slate-900 dark:text-white'
-            }`}
-          >
-            {metrics.openExposurePercent.toFixed(2)}%
-          </div>
-        </div>
+          return (
+            <>
+              <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 space-y-2.5">
+                <div className="flex items-center justify-between text-xs text-slate-500">
+                  <span>Daily Loss Monitor</span>
+                  <span className="font-mono">Limit: {riskPolicy.maxDailyLossPercent}%</span>
+                </div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span
+                    className={`text-2xl font-bold font-mono tabular-nums ${
+                      metrics.dailyLossPercent >= riskPolicy.maxDailyLossPercent
+                        ? 'text-red-500'
+                        : metrics.dailyLossPercent >= riskPolicy.maxDailyLossPercent * 0.7
+                        ? 'text-amber-500'
+                        : 'text-emerald-500'
+                    }`}
+                  >
+                    {metrics.dailyLossPercent.toFixed(2)}%
+                  </span>
+                  <span className="text-xs font-mono text-slate-500">
+                    Buffer: {dailyRemaining.toFixed(2)}%
+                  </span>
+                </div>
+                <div className="h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${
+                      dailyUsedPct >= 90 ? 'bg-red-500' : dailyUsedPct >= 70 ? 'bg-amber-500' : 'bg-emerald-500'
+                    }`}
+                    style={{ width: `${dailyUsedPct}%` }}
+                  />
+                </div>
+                <div className="text-xs font-mono text-slate-500">
+                  Today P/L: {formatCurrency(metrics.todayNetPnl, currency)}
+                </div>
+              </div>
 
-        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-4 space-y-1.5">
-          <div className="flex items-center justify-between text-xs text-slate-500">
-            <span>Max Drawdown</span>
-            <span className="font-mono">Limit: {riskPolicy.maxDrawdownPercent}%</span>
-          </div>
-          <div
-            className={`text-xl font-bold font-mono tabular-nums ${
-              metrics.maxDrawdownPercent > riskPolicy.maxDrawdownPercent
-                ? 'text-red-500'
-                : 'text-slate-900 dark:text-white'
-            }`}
-          >
-            {metrics.maxDrawdownPercent.toFixed(2)}%
-          </div>
-        </div>
+              <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 space-y-2.5">
+                <div className="flex items-center justify-between text-xs text-slate-500">
+                  <span>Open Risk Exposure</span>
+                  <span className="font-mono">Limit: {riskPolicy.maxOpenExposurePercent}%</span>
+                </div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span
+                    className={`text-2xl font-bold font-mono tabular-nums ${
+                      metrics.openExposurePercent > riskPolicy.maxOpenExposurePercent
+                        ? 'text-amber-500'
+                        : 'text-slate-900 dark:text-white'
+                    }`}
+                  >
+                    {metrics.openExposurePercent.toFixed(2)}%
+                  </span>
+                  <span className="text-xs font-mono text-slate-500">
+                    {metrics.openTradesCount} open
+                  </span>
+                </div>
+                <div className="h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${
+                      openUsedPct >= 100 ? 'bg-amber-500' : 'bg-blue-500'
+                    }`}
+                    style={{ width: `${openUsedPct}%` }}
+                  />
+                </div>
+                <div className="text-xs font-mono text-slate-500">
+                  Headroom: {Math.max(0, riskPolicy.maxOpenExposurePercent - metrics.openExposurePercent).toFixed(2)}%
+                </div>
+              </div>
 
-        <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-4 space-y-1.5">
-          <div className="flex items-center justify-between text-xs text-slate-500">
-            <span>Consecutive Losses</span>
-            <span className="font-mono">Limit: {riskPolicy.maxConsecutiveLosses}</span>
-          </div>
-          <div
-            className={`text-xl font-bold font-mono tabular-nums ${
-              metrics.currentConsecutiveLosses >= riskPolicy.maxConsecutiveLosses
-                ? 'text-amber-500'
-                : 'text-slate-900 dark:text-white'
-            }`}
-          >
-            {metrics.currentConsecutiveLosses}
-          </div>
-        </div>
+              <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 space-y-2.5">
+                <div className="flex items-center justify-between text-xs text-slate-500">
+                  <span>Max Drawdown</span>
+                  <span className="font-mono">Limit: {riskPolicy.maxDrawdownPercent}%</span>
+                </div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span
+                    className={`text-2xl font-bold font-mono tabular-nums ${
+                      metrics.maxDrawdownPercent >= riskPolicy.maxDrawdownPercent
+                        ? 'text-red-500'
+                        : metrics.maxDrawdownPercent >= riskPolicy.maxDrawdownPercent * 0.75
+                        ? 'text-amber-500'
+                        : 'text-slate-900 dark:text-white'
+                    }`}
+                  >
+                    {metrics.maxDrawdownPercent.toFixed(2)}%
+                  </span>
+                  <span className="text-xs font-mono text-slate-500">
+                    Buffer: {ddRemaining.toFixed(2)}%
+                  </span>
+                </div>
+                <div className="h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${
+                      ddUsedPct >= 90 ? 'bg-red-500' : ddUsedPct >= 70 ? 'bg-amber-500' : 'bg-blue-500'
+                    }`}
+                    style={{ width: `${ddUsedPct}%` }}
+                  />
+                </div>
+                <div className="text-xs font-mono text-slate-500">
+                  Current: {metrics.currentDrawdownPercent.toFixed(2)}% · Peak {formatPlainCurrency(metrics.peakEquity, currency)}
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 space-y-2.5">
+                <div className="flex items-center justify-between text-xs text-slate-500">
+                  <span>Consecutive Losses</span>
+                  <span className="font-mono">Limit: {riskPolicy.maxConsecutiveLosses}</span>
+                </div>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span
+                    className={`text-2xl font-bold font-mono tabular-nums ${
+                      metrics.currentConsecutiveLosses >= riskPolicy.maxConsecutiveLosses
+                        ? 'text-amber-500'
+                        : 'text-slate-900 dark:text-white'
+                    }`}
+                  >
+                    {metrics.currentConsecutiveLosses}
+                  </span>
+                  <span className="text-xs font-mono text-slate-500">
+                    {metrics.currentConsecutiveWins > 0
+                      ? `${metrics.currentConsecutiveWins}W streak`
+                      : `Max L: ${metrics.maxConsecutiveLosses}`}
+                  </span>
+                </div>
+                <div className="h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${
+                      streakPct >= 100 ? 'bg-amber-500' : 'bg-indigo-500'
+                    }`}
+                    style={{ width: `${streakPct}%` }}
+                  />
+                </div>
+                <div className="text-xs font-mono text-slate-500">
+                  Compliance: {metrics.riskComplianceRate.toFixed(0)}%
+                </div>
+              </div>
+            </>
+          );
+        })()}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-6 items-start">
@@ -142,7 +239,8 @@ export const RiskManagementView: React.FC = () => {
             </h2>
             {spec && (
               <span className="text-xs font-mono text-slate-500">
-                Contract: {spec.contractSize.toLocaleString()} · Pip: {spec.pipSize}
+                Contract: {(spec.contractSize * getAccountContractScale(activeAccount?.accountType)).toLocaleString()} · Pip: {spec.pipSize}
+                {activeAccount?.accountType === 'cent' ? ' (Cent)' : ''}
               </span>
             )}
           </div>
@@ -256,31 +354,31 @@ export const RiskManagementView: React.FC = () => {
                 : 'Enter your account balance, entry price, and stop-loss price above to calculate recommended lot size and risk exposure.'}
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-2">
-              <div className="p-3.5 rounded-lg bg-blue-600/10 border border-blue-500/20">
-                <div className="text-[11px] text-slate-500 dark:text-slate-400">Recommended Lot Size</div>
-                <div className="text-xl font-bold font-mono tabular-nums text-blue-500 mt-0.5">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+              <div className="p-4 rounded-lg bg-blue-600/10 border border-blue-500/20 space-y-1">
+                <div className="text-xs text-slate-500 dark:text-slate-400">Recommended Lot Size</div>
+                <div className="text-xl font-bold font-mono tabular-nums text-blue-500">
                   {calc.recommendedLotSize?.toFixed(2)} Lots
                 </div>
-                <div className="text-[11px] font-mono text-slate-500">
+                <div className="text-xs font-mono text-slate-500">
                   {calc.recommendedUnits?.toLocaleString()} units
                 </div>
               </div>
-              <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800">
-                <div className="text-[11px] text-slate-500">Monetary Risk</div>
-                <div className="text-xl font-bold font-mono tabular-nums text-slate-900 dark:text-white mt-0.5">
+              <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 space-y-1">
+                <div className="text-xs text-slate-500">Monetary Risk</div>
+                <div className="text-xl font-bold font-mono tabular-nums text-slate-900 dark:text-white">
                   {formatPlainCurrency(calc.actualRiskAmount, currency)}
                 </div>
-                <div className="text-[11px] font-mono text-slate-500">
+                <div className="text-xs font-mono text-slate-500">
                   {calc.stopLossPips} pips · ${calc.pipValuePerLot}/pip/lot
                 </div>
               </div>
-              <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800">
-                <div className="text-[11px] text-slate-500">Risk-to-Reward</div>
-                <div className="text-xl font-bold font-mono tabular-nums text-emerald-500 mt-0.5">
+              <div className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 space-y-1">
+                <div className="text-xs text-slate-500">Risk-to-Reward</div>
+                <div className="text-xl font-bold font-mono tabular-nums text-emerald-500">
                   {calc.riskRewardRatio ? `1 : ${calc.riskRewardRatio}` : '—'}
                 </div>
-                <div className="text-[11px] font-mono text-slate-500">
+                <div className="text-xs font-mono text-slate-500">
                   {calc.projectedRewardAmount ? formatCurrency(calc.projectedRewardAmount, currency) : 'Set TP to project'}
                 </div>
               </div>

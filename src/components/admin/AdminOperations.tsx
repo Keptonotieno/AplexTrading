@@ -9,6 +9,7 @@ import {
   Send,
   ShieldCheck,
   Users,
+  X,
 } from 'lucide-react';
 import { useMentorship } from '../../context/MentorshipContext';
 import { formatFirestoreDate } from '../../lib/firestore-helpers';
@@ -27,7 +28,7 @@ import {
   adminUpdateUserRole,
   fetchPrivateUserInfo,
 } from '../../services/mentorshipService';
-import type { PrivateUserInfo, ReviewAssessment, TradeRecord, UserRole } from '../../types/domain';
+import type { PrivateUserInfo, ReviewAssessment, TradeRecord, TradeScreenshot, UserRole } from '../../types/domain';
 import type { AdminTab } from '../AppShell';
 import { AuthenticatedImage } from '../AuthenticatedImage';
 
@@ -76,29 +77,29 @@ export const AdminOverview: React.FC<{ onNavigate: (tab: AdminTab) => void }> = 
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
         <button
           type="button"
           onClick={() => onNavigate('students')}
-          className="text-left bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-4 hover:border-blue-500/40 transition-colors"
+          className="text-left bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 hover:border-blue-500/40 transition-colors"
         >
           <div className="text-xs text-slate-500">Enrolled Students</div>
-          <div className="text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-white mt-1">
+          <div className="text-2xl font-bold font-mono tabular-nums text-slate-900 dark:text-white mt-1.5">
             {adminProfiles.length}
           </div>
-          <div className="text-xs text-blue-500 mt-1">Manage profiles →</div>
+          <div className="text-xs text-blue-500 mt-1.5">Manage profiles →</div>
         </button>
 
         <button
           type="button"
           onClick={() => onNavigate('reviews')}
-          className="text-left bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-4 hover:border-blue-500/40 transition-colors"
+          className="text-left bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 hover:border-blue-500/40 transition-colors"
         >
           <div className="text-xs text-slate-500">Trades Pending Review</div>
-          <div className="text-2xl font-bold font-mono tabular-nums text-amber-500 mt-1">
+          <div className="text-2xl font-bold font-mono tabular-nums text-amber-500 mt-1.5">
             {unreviewedTrades.length}
           </div>
-          <div className="text-xs text-slate-500 mt-1">
+          <div className="text-xs text-slate-500 mt-1.5">
             Out of {adminAllTrades.length} total trades
           </div>
         </button>
@@ -106,13 +107,13 @@ export const AdminOverview: React.FC<{ onNavigate: (tab: AdminTab) => void }> = 
         <button
           type="button"
           onClick={() => onNavigate('risk_psych')}
-          className="text-left bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-4 hover:border-blue-500/40 transition-colors"
+          className="text-left bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 hover:border-blue-500/40 transition-colors"
         >
           <div className="text-xs text-slate-500">Unacknowledged Risk Alerts</div>
-          <div className="text-2xl font-bold font-mono tabular-nums text-red-500 mt-1">
+          <div className="text-2xl font-bold font-mono tabular-nums text-red-500 mt-1.5">
             {openViolations.length}
           </div>
-          <div className="text-xs text-slate-500 mt-1">
+          <div className="text-xs text-slate-500 mt-1.5">
             {adminAllViolations.length} total logged
           </div>
         </button>
@@ -120,13 +121,13 @@ export const AdminOverview: React.FC<{ onNavigate: (tab: AdminTab) => void }> = 
         <button
           type="button"
           onClick={() => onNavigate('challenges')}
-          className="text-left bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-4 hover:border-blue-500/40 transition-colors"
+          className="text-left bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 hover:border-blue-500/40 transition-colors"
         >
           <div className="text-xs text-slate-500">Active Challenge Cycle</div>
-          <div className="text-sm font-bold text-slate-900 dark:text-white mt-1.5 truncate">
+          <div className="text-sm font-bold text-slate-900 dark:text-white mt-2 truncate">
             {activeCycle ? activeCycle.title : 'None Active'}
           </div>
-          <div className="text-xs text-emerald-500 mt-1">
+          <div className="text-xs text-emerald-500 mt-1.5">
             {pendingAssignments.length} pending assignments
           </div>
         </button>
@@ -444,7 +445,7 @@ export const AdminStudentsView: React.FC = () => {
         </div>
 
         {/* Individual Student Profile Inspector */}
-        <div className="lg:col-span-5 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 space-y-4">
+        <div className="lg:col-span-5 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 space-y-5">
           {!selectedProfile || !selectedMetrics ? (
             <p className="text-xs text-slate-500 py-10 text-center">
               Select any student row to view full profile, accounts, metrics, and status controls.
@@ -484,28 +485,28 @@ export const AdminStudentsView: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5 text-xs">
-                <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E]">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs">
+                <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200/70 dark:border-slate-800">
                   <div className="text-slate-500">Account Balance</div>
-                  <div className="font-mono font-bold mt-0.5">
+                  <div className="text-sm font-mono font-bold tabular-nums mt-1">
                     {formatPlainCurrency(selectedMetrics.currentAccountBalance)}
                   </div>
                 </div>
-                <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E]">
+                <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200/70 dark:border-slate-800">
                   <div className="text-slate-500">Win Rate</div>
-                  <div className="font-mono font-bold mt-0.5">
+                  <div className="text-sm font-mono font-bold tabular-nums mt-1">
                     {selectedMetrics.winRate}% ({selectedMetrics.closedTradesCount} closed)
                   </div>
                 </div>
-                <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E]">
+                <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200/70 dark:border-slate-800">
                   <div className="text-slate-500">Risk Compliance</div>
-                  <div className="font-mono font-bold mt-0.5">
+                  <div className="text-sm font-mono font-bold tabular-nums mt-1">
                     {selectedMetrics.riskComplianceRate}%
                   </div>
                 </div>
-                <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E]">
+                <div className="p-3.5 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200/70 dark:border-slate-800">
                   <div className="text-slate-500">5-Pillar Score</div>
-                  <div className="font-mono font-bold text-blue-500 mt-0.5">
+                  <div className="text-sm font-mono font-bold tabular-nums text-blue-500 mt-1">
                     {selectedMetrics.scores.overall}/100
                   </div>
                 </div>
@@ -593,6 +594,7 @@ export const AdminReviewsView: React.FC = () => {
   const [recommendations, setRecommendations] = useState('');
   const [clarificationRequested, setClarificationRequested] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [lightboxShot, setLightboxShot] = useState<TradeScreenshot | null>(null);
 
   const filteredTrades = useMemo(() => {
     return adminAllTrades.filter((t) => {
@@ -647,7 +649,7 @@ export const AdminReviewsView: React.FC = () => {
       </div>
 
       {/* Filters */}
-      <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-4 gap-3">
+      <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         <select
           value={studentFilter}
           onChange={(e) => setStudentFilter(e.target.value)}
@@ -784,13 +786,23 @@ export const AdminReviewsView: React.FC = () => {
                       key={shot.id}
                       className="rounded-lg border border-slate-200 dark:border-slate-800 overflow-hidden bg-slate-50 dark:bg-[#0B111E]"
                     >
-                      <AuthenticatedImage
-                        src={shot.imageUrl}
-                        alt={shot.caption || shot.stage}
-                        className="w-full h-40 object-cover"
-                      />
-                      <div className="p-2.5 text-xs">
-                        <div className="font-semibold text-blue-500 uppercase text-[10px]">
+                      <button
+                        type="button"
+                        onClick={() => setLightboxShot(shot)}
+                        className="w-full block text-left relative group"
+                      >
+                        <AuthenticatedImage
+                          src={shot.imageUrl}
+                          alt={shot.caption || shot.stage}
+                          className="w-full h-40 object-cover"
+                        />
+                        <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-slate-950/80 text-white text-[11px] opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1">
+                          <Eye className="w-3 h-3" />
+                          Inspect
+                        </span>
+                      </button>
+                      <div className="p-3 text-xs">
+                        <div className="font-semibold text-blue-500 uppercase text-[11px] tracking-wide">
                           {shot.stage.replace('_', ' ')}
                         </div>
                         {shot.caption && <div className="font-medium mt-0.5">{shot.caption}</div>}
@@ -892,6 +904,51 @@ export const AdminReviewsView: React.FC = () => {
           )}
         </div>
       </div>
+
+      {lightboxShot && (
+        <div
+          className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setLightboxShot(null)}
+        >
+          <div
+            className="max-w-5xl w-full max-h-[92vh] flex flex-col overflow-hidden rounded-xl border border-slate-700 bg-[#0B111E]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold uppercase tracking-wide text-blue-400">
+                  {lightboxShot.stage.replace('_', ' ')}
+                </div>
+                {lightboxShot.caption && (
+                  <div className="text-sm font-medium text-white truncate">
+                    {lightboxShot.caption}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setLightboxShot(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+                aria-label="Close chart preview"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto flex items-center justify-center bg-black/40 p-2">
+              <AuthenticatedImage
+                src={lightboxShot.imageUrl}
+                alt={lightboxShot.caption || 'Student chart screenshot'}
+                className="max-w-full max-h-[72vh] object-contain"
+              />
+            </div>
+            {lightboxShot.marketStructureNotes && (
+              <div className="px-4 py-3 border-t border-slate-800 text-xs text-slate-300 leading-relaxed max-h-32 overflow-y-auto">
+                {lightboxShot.marketStructureNotes}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
