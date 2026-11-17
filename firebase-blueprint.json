@@ -1,0 +1,586 @@
+{
+  "entities": {
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted registry of authorized mentor/administrator UIDs.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 254 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "grantedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "createdAt"]
+    },
+    "UserAccount": {
+      "title": "UserAccount",
+      "description": "Core user account and status record without sensitive contact PII.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "role": { "type": "string", "enum": ["student", "mentor"] },
+        "status": { "type": "string", "enum": ["active", "pending", "suspended"] },
+        "publicLeaderboardOptIn": { "type": "boolean" },
+        "photoUrl": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "displayName", "role", "status", "publicLeaderboardOptIn", "createdAt", "updatedAt"]
+    },
+    "PrivateUserInfo": {
+      "title": "PrivateUserInfo",
+      "description": "Isolated PII document containing email, phone number, and country.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 254 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "country": { "type": "string", "maxLength": 80 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "country", "updatedAt"]
+    },
+    "StudentProfile": {
+      "title": "StudentProfile",
+      "description": "Mentorship student profile with trading experience and preferences.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "fullName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "experienceLevel": { "type": "string", "enum": ["beginner", "intermediate", "advanced", "funded"] },
+        "preferredInstruments": { "type": "array", "description": "Bounded list of up to 15 Forex/commodity pairs." },
+        "brokerName": { "type": "string", "maxLength": 80 },
+        "publicLeaderboardOptIn": { "type": "boolean" },
+        "completedLessonIds": { "type": "array", "description": "Bounded list of up to 100 completed lesson IDs." },
+        "status": { "type": "string", "enum": ["active", "pending", "suspended"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "fullName", "experienceLevel", "preferredInstruments", "publicLeaderboardOptIn", "completedLessonIds", "status", "createdAt", "updatedAt"]
+    },
+    "TradingAccount": {
+      "title": "TradingAccount",
+      "description": "Independent student trading account record for balance and capital tracking.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "currency": { "type": "string", "enum": ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF"] },
+        "brokerName": { "type": "string", "maxLength": 80 },
+        "accountType": { "type": "string", "enum": ["demo", "live", "prop_challenge", "funded"] },
+        "initialBalance": { "type": "number" },
+        "currentBalance": { "type": "number" },
+        "isDefault": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "name", "currency", "accountType", "initialBalance", "currentBalance", "isDefault", "createdAt", "updatedAt"]
+    },
+    "AccountTransaction": {
+      "title": "AccountTransaction",
+      "description": "Deposit or withdrawal record kept strictly separate from trading P/L.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "accountId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "type": { "type": "string", "enum": ["deposit", "withdrawal"] },
+        "amount": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 300 },
+        "occurredAt": { "type": "string", "maxLength": 40 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "accountId", "type", "amount", "occurredAt", "createdAt"]
+    },
+    "TradeRecord": {
+      "title": "TradeRecord",
+      "description": "Manual Forex trade journal entry with automated calculation fields.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "accountId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "challengeCycleId": { "type": "string", "maxLength": 128 },
+        "instrument": { "type": "string", "minLength": 3, "maxLength": 20 },
+        "direction": { "type": "string", "enum": ["BUY", "SELL"] },
+        "entryPrice": { "type": "number" },
+        "stopLoss": { "type": "number" },
+        "takeProfit": { "type": "number" },
+        "exitPrice": { "type": "number" },
+        "lotSize": { "type": "number" },
+        "accountBalanceAtEntry": { "type": "number" },
+        "plannedRiskPercent": { "type": "number" },
+        "plannedRiskAmount": { "type": "number" },
+        "riskRewardRatio": { "type": "number" },
+        "grossPnl": { "type": "number" },
+        "commission": { "type": "number" },
+        "swap": { "type": "number" },
+        "netPnl": { "type": "number" },
+        "rMultiple": { "type": "number" },
+        "session": { "type": "string", "enum": ["London", "New York", "Tokyo", "Sydney", "Overlap"] },
+        "strategy": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "marketCondition": { "type": "string", "maxLength": 80 },
+        "status": { "type": "string", "enum": ["planned", "open", "closed", "draft"] },
+        "openedAt": { "type": "string", "maxLength": 40 },
+        "closedAt": { "type": "string", "maxLength": 40 },
+        "entryJustification": { "type": "string", "maxLength": 2000 },
+        "exitJustification": { "type": "string", "maxLength": 2000 },
+        "observations": { "type": "string", "maxLength": 2000 },
+        "lessonsLearned": { "type": "string", "maxLength": 2000 },
+        "planFollowed": { "type": "boolean" },
+        "riskViolation": { "type": "boolean" },
+        "editCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "accountId", "instrument", "direction", "entryPrice", "stopLoss", "lotSize", "accountBalanceAtEntry", "plannedRiskPercent", "session", "strategy", "status", "openedAt", "planFollowed", "riskViolation", "editCount", "createdAt", "updatedAt"]
+    },
+    "TradeEditLog": {
+      "title": "TradeEditLog",
+      "description": "Immutable audit trail for trade journal modifications.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "tradeId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "editorId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "previousStatus": { "type": "string", "maxLength": 20 },
+        "newStatus": { "type": "string", "maxLength": 20 },
+        "previousNetPnl": { "type": "number" },
+        "newNetPnl": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tradeId", "userId", "editorId", "summary", "previousStatus", "newStatus", "createdAt"]
+    },
+    "TradeScreenshot": {
+      "title": "TradeScreenshot",
+      "description": "Uploaded chart screenshot metadata linked to a trade record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "tradeId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "stage": { "type": "string", "enum": ["before_entry", "entry_confirmation", "stop_loss", "take_profit", "after_trade", "annotated"] },
+        "imageUrl": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "caption": { "type": "string", "maxLength": 400 },
+        "marketStructureNotes": { "type": "string", "maxLength": 1500 },
+        "fileName": { "type": "string", "maxLength": 180 },
+        "mimeType": { "type": "string", "maxLength": 60 },
+        "fileSize": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tradeId", "userId", "stage", "imageUrl", "fileName", "mimeType", "fileSize", "createdAt"]
+    },
+    "TradeReview": {
+      "title": "TradeReview",
+      "description": "Mentor critique, rating, and clarification request on a student trade.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "tradeId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "mentorId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "mentorName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "assessment": { "type": "string", "enum": ["exemplary", "compliant", "needs_clarification", "rule_violation"] },
+        "rating": { "type": "number" },
+        "comment": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "clarificationRequested": { "type": "boolean" },
+        "recommendations": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tradeId", "studentId", "mentorId", "mentorName", "assessment", "rating", "comment", "clarificationRequested", "createdAt", "updatedAt"]
+    },
+    "RiskPolicy": {
+      "title": "RiskPolicy",
+      "description": "Configurable programme risk rules set by the mentor.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "maxRiskPerTradePercent": { "type": "number" },
+        "maxDailyLossPercent": { "type": "number" },
+        "maxDrawdownPercent": { "type": "number" },
+        "maxConsecutiveLosses": { "type": "number" },
+        "maxOpenExposurePercent": { "type": "number" },
+        "updatedBy": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "maxRiskPerTradePercent", "maxDailyLossPercent", "maxDrawdownPercent", "maxConsecutiveLosses", "maxOpenExposurePercent", "updatedBy", "updatedAt"]
+    },
+    "RiskViolation": {
+      "title": "RiskViolation",
+      "description": "Logged risk rule breach triggered when thresholds are exceeded.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "tradeId": { "type": "string", "maxLength": 128 },
+        "policyRule": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "thresholdValue": { "type": "number" },
+        "actualValue": { "type": "number" },
+        "severity": { "type": "string", "enum": ["warning", "breach"] },
+        "acknowledged": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "policyRule", "thresholdValue", "actualValue", "severity", "acknowledged", "createdAt"]
+    },
+    "PsychologyAssessment": {
+      "title": "PsychologyAssessment",
+      "description": "Pre-trade or post-trade behavioural self-assessment.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "tradeId": { "type": "string", "maxLength": 128 },
+        "phase": { "type": "string", "enum": ["pre_trade", "post_trade"] },
+        "emotionalState": { "type": "string", "enum": ["calm", "focused", "anxious", "frustrated", "overconfident", "hesitant", "fatigued"] },
+        "confidenceLevel": { "type": "number" },
+        "fomoLevel": { "type": "number" },
+        "revengeTendency": { "type": "boolean" },
+        "followsStrategy": { "type": "boolean" },
+        "riskCalculated": { "type": "boolean" },
+        "planFollowed": { "type": "boolean" },
+        "stopLossRespected": { "type": "boolean" },
+        "closedEmotionally": { "type": "boolean" },
+        "overtradingOccurred": { "type": "boolean" },
+        "notes": { "type": "string", "maxLength": 1500 },
+        "lessonsLearned": { "type": "string", "maxLength": 1500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "phase", "emotionalState", "confidenceLevel", "fomoLevel", "revengeTendency", "followsStrategy", "riskCalculated", "createdAt"]
+    },
+    "ChallengeCycle": {
+      "title": "ChallengeCycle",
+      "description": "Recurring 30-day or extended 60-day mentorship challenge cycle.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "description": { "type": "string", "maxLength": 800 },
+        "durationDays": { "type": "number" },
+        "startDate": { "type": "string", "maxLength": 40 },
+        "endDate": { "type": "string", "maxLength": 40 },
+        "status": { "type": "string", "enum": ["upcoming", "active", "closed"] },
+        "targetGrowthPercent": { "type": "number" },
+        "maxDrawdownPercent": { "type": "number" },
+        "maxRiskPerTradePercent": { "type": "number" },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "durationDays", "startDate", "endDate", "status", "targetGrowthPercent", "maxDrawdownPercent", "maxRiskPerTradePercent", "createdBy", "createdAt", "updatedAt"]
+    },
+    "ChallengeParticipant": {
+      "title": "ChallengeParticipant",
+      "description": "Historical performance snapshot for a student in a specific challenge cycle.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "cycleId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "accountId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "openingBalance": { "type": "number" },
+        "currentBalance": { "type": "number" },
+        "closingBalance": { "type": "number" },
+        "netPnl": { "type": "number" },
+        "growthPercent": { "type": "number" },
+        "tradesCount": { "type": "number" },
+        "winsCount": { "type": "number" },
+        "maxDrawdownPercent": { "type": "number" },
+        "riskScore": { "type": "number" },
+        "disciplineScore": { "type": "number" },
+        "consistencyScore": { "type": "number" },
+        "overallScore": { "type": "number" },
+        "mentorEvaluation": { "type": "string", "maxLength": 1500 },
+        "status": { "type": "string", "enum": ["active", "completed", "withdrawn"] },
+        "joinedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "cycleId", "userId", "studentName", "accountId", "openingBalance", "currentBalance", "netPnl", "growthPercent", "tradesCount", "winsCount", "maxDrawdownPercent", "riskScore", "disciplineScore", "consistencyScore", "overallScore", "status", "joinedAt", "updatedAt"]
+    },
+    "PerformanceSnapshot": {
+      "title": "PerformanceSnapshot",
+      "description": "Periodic computed account snapshot for equity curve history.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "accountId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "snapshotDate": { "type": "string", "maxLength": 40 },
+        "balance": { "type": "number" },
+        "equity": { "type": "number" },
+        "drawdownPercent": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "accountId", "snapshotDate", "balance", "equity", "drawdownPercent", "createdAt"]
+    },
+    "MentorReview": {
+      "title": "MentorReview",
+      "description": "Weekly or monthly individual performance evaluation report.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "mentorId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "mentorName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "periodType": { "type": "string", "enum": ["weekly", "monthly", "challenge"] },
+        "periodLabel": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "cycleId": { "type": "string", "maxLength": 128 },
+        "totalTrades": { "type": "number" },
+        "winningTrades": { "type": "number" },
+        "losingTrades": { "type": "number" },
+        "netPnl": { "type": "number" },
+        "accountGrowthPercent": { "type": "number" },
+        "winRate": { "type": "number" },
+        "avgRiskPercent": { "type": "number" },
+        "maxDrawdownPercent": { "type": "number" },
+        "bestInstrument": { "type": "string", "maxLength": 40 },
+        "weakestInstrument": { "type": "string", "maxLength": 40 },
+        "commonMistakes": { "type": "string", "maxLength": 1200 },
+        "riskViolationsCount": { "type": "number" },
+        "psychologyObservations": { "type": "string", "maxLength": 1200 },
+        "improvementsRequired": { "type": "string", "maxLength": 1200 },
+        "mentorRecommendations": { "type": "string", "maxLength": 1500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "studentId", "studentName", "mentorId", "mentorName", "periodType", "periodLabel", "totalTrades", "winningTrades", "losingTrades", "netPnl", "accountGrowthPercent", "winRate", "avgRiskPercent", "maxDrawdownPercent", "riskViolationsCount", "mentorRecommendations", "createdAt"]
+    },
+    "LearningMaterial": {
+      "title": "LearningMaterial",
+      "description": "Educational lesson, video resource, quiz, or exercise published by the mentor.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "type": { "type": "string", "enum": ["lesson", "video", "quiz", "exercise"] },
+        "durationMinutes": { "type": "number" },
+        "difficulty": { "type": "string", "enum": ["foundation", "intermediate", "advanced"] },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "content": { "type": "string", "maxLength": 8000 },
+        "videoUrl": { "type": "string", "maxLength": 500 },
+        "quizQuestions": { "type": "array", "description": "Bounded list of up to 20 quiz items." },
+        "published": { "type": "boolean" },
+        "orderIndex": { "type": "number" },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "category", "type", "durationMinutes", "difficulty", "summary", "published", "orderIndex", "createdBy", "createdAt", "updatedAt"]
+    },
+    "AssignmentSubmission": {
+      "title": "AssignmentSubmission",
+      "description": "Student assignment or quiz submission reviewed by the mentor.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "materialId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "materialTitle": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "studentName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "responseText": { "type": "string", "maxLength": 4000 },
+        "quizScore": { "type": "number" },
+        "status": { "type": "string", "enum": ["submitted", "reviewed"] },
+        "mentorFeedback": { "type": "string", "maxLength": 1500 },
+        "reviewedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "materialId", "materialTitle", "userId", "studentName", "status", "createdAt", "updatedAt"]
+    },
+    "NotificationItem": {
+      "title": "NotificationItem",
+      "description": "Internal student or mentor notification with read status.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "recipientId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "type": { "type": "string", "enum": ["mentor_feedback", "risk_violation", "weekly_review", "challenge", "lesson", "announcement", "reminder"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "message": { "type": "string", "minLength": 1, "maxLength": 600 },
+        "linkTab": { "type": "string", "maxLength": 60 },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "recipientId", "type", "title", "message", "read", "createdAt"]
+    },
+    "AnnouncementItem": {
+      "title": "AnnouncementItem",
+      "description": "Community announcement or scheduled mentorship session.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 140 },
+        "body": { "type": "string", "minLength": 1, "maxLength": 3000 },
+        "category": { "type": "string", "enum": ["community", "challenge", "education", "session"] },
+        "pinned": { "type": "boolean" },
+        "sessionDate": { "type": "string", "maxLength": 40 },
+        "authorId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "authorName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "body", "category", "pinned", "authorId", "authorName", "createdAt"]
+    },
+    "LeaderboardEntry": {
+      "title": "LeaderboardEntry",
+      "description": "Opt-in anonymized or public ranking metrics without private balances or PII.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "displayAlias": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "growthPercent": { "type": "number" },
+        "winRate": { "type": "number" },
+        "consistencyScore": { "type": "number" },
+        "riskScore": { "type": "number" },
+        "disciplineScore": { "type": "number" },
+        "overallScore": { "type": "number" },
+        "improvementDelta": { "type": "number" },
+        "eligibleTradesCount": { "type": "number" },
+        "optedIn": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "displayAlias", "growthPercent", "winRate", "consistencyScore", "riskScore", "disciplineScore", "overallScore", "improvementDelta", "eligibleTradesCount", "optedIn", "updatedAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Immutable administrative and security event log.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "actorId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "actorEmail": { "type": "string", "maxLength": 254 },
+        "action": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "targetType": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "details": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "actorId", "action", "targetType", "createdAt"]
+    },
+    "SystemSettings": {
+      "title": "SystemSettings",
+      "description": "Global mentorship configuration including scoring weights and programme defaults.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "programmeName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "challengeDefaultDays": { "type": "number" },
+        "weightRiskManagement": { "type": "number" },
+        "weightDiscipline": { "type": "number" },
+        "weightConsistency": { "type": "number" },
+        "weightProfitability": { "type": "number" },
+        "weightJournalCompletion": { "type": "number" },
+        "requireMentorApproval": { "type": "boolean" },
+        "minTradesForLeaderboard": { "type": "number" },
+        "updatedBy": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "programmeName", "challengeDefaultDays", "weightRiskManagement", "weightDiscipline", "weightConsistency", "weightProfitability", "weightJournalCompletion", "requireMentorApproval", "minTradesForLeaderboard", "updatedBy", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Authorized mentor/administrator accounts."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserAccount" },
+      "description": "Core user accounts and role/status state."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/PrivateUserInfo" },
+      "description": "Isolated PII storage (email, phone, country) restricted to owner and admin."
+    },
+    "/studentProfiles/{userId}": {
+      "schema": { "$ref": "#/entities/StudentProfile" },
+      "description": "Student mentorship profile and educational progress."
+    },
+    "/tradingAccounts/{accountId}": {
+      "schema": { "$ref": "#/entities/TradingAccount" },
+      "description": "Student trading accounts tracked independently of brokers."
+    },
+    "/accountTransactions/{txId}": {
+      "schema": { "$ref": "#/entities/AccountTransaction" },
+      "description": "Capital deposits and withdrawals isolated from trading profits."
+    },
+    "/trades/{tradeId}": {
+      "schema": { "$ref": "#/entities/TradeRecord" },
+      "description": "Student manual trade journal records."
+    },
+    "/tradeEditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/TradeEditLog" },
+      "description": "Immutable edit history preserving audit trail for historical trade edits."
+    },
+    "/tradeScreenshots/{screenshotId}": {
+      "schema": { "$ref": "#/entities/TradeScreenshot" },
+      "description": "Trade chart screenshots and technical analysis annotations."
+    },
+    "/tradeReviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/TradeReview" },
+      "description": "Mentor evaluations and comments on student trade setups."
+    },
+    "/riskPolicies/{policyId}": {
+      "schema": { "$ref": "#/entities/RiskPolicy" },
+      "description": "Configurable programme risk management thresholds."
+    },
+    "/riskViolations/{violationId}": {
+      "schema": { "$ref": "#/entities/RiskViolation" },
+      "description": "Recorded risk threshold violations for student and mentor monitoring."
+    },
+    "/psychologyAssessments/{assessmentId}": {
+      "schema": { "$ref": "#/entities/PsychologyAssessment" },
+      "description": "Pre-trade and post-trade psychological self-assessments."
+    },
+    "/challengeCycles/{cycleId}": {
+      "schema": { "$ref": "#/entities/ChallengeCycle" },
+      "description": "Recurring 30-day or 60-day mentorship challenge cycles."
+    },
+    "/challengeParticipants/{participantId}": {
+      "schema": { "$ref": "#/entities/ChallengeParticipant" },
+      "description": "Student enrollment and historical cycle performance snapshots."
+    },
+    "/performanceSnapshots/{snapshotId}": {
+      "schema": { "$ref": "#/entities/PerformanceSnapshot" },
+      "description": "Equity curve and drawdown historical snapshots."
+    },
+    "/mentorReviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/MentorReview" },
+      "description": "Weekly, monthly, and cycle mentor evaluation reports."
+    },
+    "/learningMaterials/{materialId}": {
+      "schema": { "$ref": "#/entities/LearningMaterial" },
+      "description": "Mentor-published lessons, video guides, quizzes, and exercises."
+    },
+    "/assignments/{submissionId}": {
+      "schema": { "$ref": "#/entities/AssignmentSubmission" },
+      "description": "Student assignment/quiz submissions and mentor feedback."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/NotificationItem" },
+      "description": "Per-user notifications with read/unread state."
+    },
+    "/announcements/{announcementId}": {
+      "schema": { "$ref": "#/entities/AnnouncementItem" },
+      "description": "Community announcements and mentorship session schedules."
+    },
+    "/leaderboardEntries/{userId}": {
+      "schema": { "$ref": "#/entities/LeaderboardEntry" },
+      "description": "Controlled-visibility community performance rankings for opted-in students."
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Immutable security and administrative action log."
+    },
+    "/systemSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/SystemSettings" },
+      "description": "Platform configuration and scoring methodology weights."
+    }
+  }
+}

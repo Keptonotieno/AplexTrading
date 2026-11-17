@@ -1,0 +1,6 @@
+{
+  "name": "Forex Mentorship",
+  "description": "Independent Forex mentorship, trading journal, risk management, psychology tracking, and performance management platform.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

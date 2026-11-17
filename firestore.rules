@@ -1,0 +1,942 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net: Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // Global Hardened Primitives
+    // =========================================================================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return isVerified() && (
+        request.auth.token.email == 'keptonokoth@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isBootstrappedAdminEmail() {
+      return isVerified() && request.auth.token.email == 'keptonokoth@gmail.com';
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOptString(data, key, maxLen) {
+      return !(key in data) || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    function isOptNumber(data, key) {
+      return !(key in data) || (data[key] is number);
+    }
+
+    function isOptBool(data, key) {
+      return !(key in data) || (data[key] is bool);
+    }
+
+    // Connection check doc
+    match /test/connection {
+      allow get: if isSignedIn();
+    }
+
+    // =========================================================================
+    // Validation Blueprints (Anti-Update-Gap)
+    // =========================================================================
+    function isValidAdminRecord(data, adminId) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'grantedBy', 'createdAt'])
+        && isValidId(data.uid) && data.uid == adminId
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
+        && isOptString(data, 'grantedBy', 128)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidUserAccount(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'role', 'status', 'publicLeaderboardOptIn', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'role', 'status', 'publicLeaderboardOptIn', 'photoUrl', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid) && data.uid == userId
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
+        && data.role in ['student', 'mentor']
+        && data.status in ['active', 'pending', 'suspended']
+        && data.publicLeaderboardOptIn is bool
+        && isOptString(data, 'photoUrl', 500)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPrivateUserInfo(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'country', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'phone', 'country', 'updatedAt'])
+        && isValidId(data.uid) && data.uid == userId
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && isOptString(data, 'phone', 32)
+        && data.country is string && data.country.size() >= 1 && data.country.size() <= 80
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidStudentProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'fullName', 'experienceLevel', 'preferredInstruments', 'publicLeaderboardOptIn', 'completedLessonIds', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'fullName', 'experienceLevel', 'preferredInstruments', 'brokerName', 'publicLeaderboardOptIn', 'completedLessonIds', 'status', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid) && data.uid == userId
+        && data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 120
+        && data.experienceLevel in ['beginner', 'intermediate', 'advanced', 'funded']
+        && data.preferredInstruments is list && data.preferredInstruments.size() <= 15
+        && (data.preferredInstruments.size() == 0 || data.preferredInstruments[0] is string)
+        && isOptString(data, 'brokerName', 80)
+        && data.publicLeaderboardOptIn is bool
+        && data.completedLessonIds is list && data.completedLessonIds.size() <= 100
+        && (data.completedLessonIds.size() == 0 || data.completedLessonIds[0] is string)
+        && data.status in ['active', 'pending', 'suspended']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTradingAccount(data, accountId) {
+      return data.keys().hasAll(['id', 'userId', 'name', 'currency', 'accountType', 'initialBalance', 'currentBalance', 'isDefault', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'userId', 'name', 'currency', 'brokerName', 'accountType', 'initialBalance', 'currentBalance', 'isDefault', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && data.id == accountId
+        && isValidId(data.userId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.currency in ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF']
+        && isOptString(data, 'brokerName', 80)
+        && data.accountType in ['demo', 'live', 'prop_challenge', 'funded']
+        && data.initialBalance is number && data.initialBalance >= 0
+        && data.currentBalance is number
+        && data.isDefault is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAccountTransaction(data, txId) {
+      return data.keys().hasAll(['id', 'userId', 'accountId', 'type', 'amount', 'occurredAt', 'createdAt'])
+        && data.keys().hasOnly(['id', 'userId', 'accountId', 'type', 'amount', 'notes', 'occurredAt', 'createdAt'])
+        && isValidId(data.id) && data.id == txId
+        && isValidId(data.userId)
+        && isValidId(data.accountId)
+        && data.type in ['deposit', 'withdrawal']
+        && data.amount is number && data.amount > 0
+        && isOptString(data, 'notes', 300)
+        && data.occurredAt is string && data.occurredAt.size() >= 4 && data.occurredAt.size() <= 40
+        && data.createdAt is timestamp;
+    }
+
+    function isValidTradeRecord(data, tradeId) {
+      return data.keys().hasAll([
+          'id', 'userId', 'accountId', 'instrument', 'direction', 'entryPrice', 'stopLoss',
+          'lotSize', 'accountBalanceAtEntry', 'plannedRiskPercent', 'session', 'strategy',
+          'status', 'openedAt', 'planFollowed', 'riskViolation', 'editCount', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'userId', 'accountId', 'challengeCycleId', 'instrument', 'direction',
+          'entryPrice', 'stopLoss', 'takeProfit', 'exitPrice', 'lotSize',
+          'accountBalanceAtEntry', 'plannedRiskPercent', 'plannedRiskAmount', 'riskRewardRatio',
+          'grossPnl', 'commission', 'swap', 'netPnl', 'rMultiple', 'session', 'strategy',
+          'marketCondition', 'status', 'openedAt', 'closedAt', 'entryJustification',
+          'exitJustification', 'observations', 'lessonsLearned', 'planFollowed',
+          'riskViolation', 'editCount', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id) && data.id == tradeId
+        && isValidId(data.userId)
+        && isValidId(data.accountId)
+        && isOptString(data, 'challengeCycleId', 128)
+        && data.instrument is string && data.instrument.size() >= 3 && data.instrument.size() <= 20
+        && data.direction in ['BUY', 'SELL']
+        && data.entryPrice is number && data.entryPrice > 0
+        && data.stopLoss is number && data.stopLoss > 0
+        && isOptNumber(data, 'takeProfit')
+        && isOptNumber(data, 'exitPrice')
+        && data.lotSize is number && data.lotSize > 0
+        && data.accountBalanceAtEntry is number && data.accountBalanceAtEntry > 0
+        && data.plannedRiskPercent is number && data.plannedRiskPercent >= 0 && data.plannedRiskPercent <= 100
+        && isOptNumber(data, 'plannedRiskAmount')
+        && isOptNumber(data, 'riskRewardRatio')
+        && isOptNumber(data, 'grossPnl')
+        && isOptNumber(data, 'commission')
+        && isOptNumber(data, 'swap')
+        && isOptNumber(data, 'netPnl')
+        && isOptNumber(data, 'rMultiple')
+        && data.session in ['London', 'New York', 'Tokyo', 'Sydney', 'Overlap']
+        && data.strategy is string && data.strategy.size() >= 1 && data.strategy.size() <= 80
+        && isOptString(data, 'marketCondition', 80)
+        && data.status in ['planned', 'open', 'closed', 'draft']
+        && data.openedAt is string && data.openedAt.size() >= 4 && data.openedAt.size() <= 40
+        && isOptString(data, 'closedAt', 40)
+        && isOptString(data, 'entryJustification', 2000)
+        && isOptString(data, 'exitJustification', 2000)
+        && isOptString(data, 'observations', 2000)
+        && isOptString(data, 'lessonsLearned', 2000)
+        && data.planFollowed is bool
+        && data.riskViolation is bool
+        && data.editCount is number && data.editCount >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTradeEditLog(data, logId) {
+      return data.keys().hasAll(['id', 'tradeId', 'userId', 'editorId', 'summary', 'previousStatus', 'newStatus', 'createdAt'])
+        && data.keys().hasOnly(['id', 'tradeId', 'userId', 'editorId', 'summary', 'previousStatus', 'newStatus', 'previousNetPnl', 'newNetPnl', 'createdAt'])
+        && isValidId(data.id) && data.id == logId
+        && isValidId(data.tradeId)
+        && isValidId(data.userId)
+        && isValidId(data.editorId)
+        && data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 500
+        && data.previousStatus is string && data.previousStatus.size() <= 20
+        && data.newStatus is string && data.newStatus.size() <= 20
+        && isOptNumber(data, 'previousNetPnl')
+        && isOptNumber(data, 'newNetPnl')
+        && data.createdAt is timestamp;
+    }
+
+    function isValidTradeScreenshot(data, screenshotId) {
+      return data.keys().hasAll(['id', 'tradeId', 'userId', 'stage', 'imageUrl', 'fileName', 'mimeType', 'fileSize', 'createdAt'])
+        && data.keys().hasOnly(['id', 'tradeId', 'userId', 'stage', 'imageUrl', 'caption', 'marketStructureNotes', 'fileName', 'mimeType', 'fileSize', 'createdAt'])
+        && isValidId(data.id) && data.id == screenshotId
+        && isValidId(data.tradeId)
+        && isValidId(data.userId)
+        && data.stage in ['before_entry', 'entry_confirmation', 'stop_loss', 'take_profit', 'after_trade', 'annotated']
+        && data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 500
+        && isOptString(data, 'caption', 400)
+        && isOptString(data, 'marketStructureNotes', 1500)
+        && data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 180
+        && data.mimeType in ['image/png', 'image/jpeg', 'image/webp']
+        && data.fileSize is number && data.fileSize > 0 && data.fileSize <= 5242880
+        && data.createdAt is timestamp;
+    }
+
+    function isValidTradeReview(data, reviewId) {
+      return data.keys().hasAll(['id', 'tradeId', 'studentId', 'mentorId', 'mentorName', 'assessment', 'rating', 'comment', 'clarificationRequested', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'tradeId', 'studentId', 'mentorId', 'mentorName', 'assessment', 'rating', 'comment', 'clarificationRequested', 'recommendations', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && data.id == reviewId
+        && isValidId(data.tradeId)
+        && isValidId(data.studentId)
+        && isValidId(data.mentorId)
+        && data.mentorName is string && data.mentorName.size() >= 1 && data.mentorName.size() <= 120
+        && data.assessment in ['exemplary', 'compliant', 'needs_clarification', 'rule_violation']
+        && data.rating is number && data.rating >= 1 && data.rating <= 5
+        && data.comment is string && data.comment.size() >= 1 && data.comment.size() <= 2000
+        && data.clarificationRequested is bool
+        && isOptString(data, 'recommendations', 1000)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRiskPolicy(data, policyId) {
+      return data.keys().hasAll(['id', 'name', 'maxRiskPerTradePercent', 'maxDailyLossPercent', 'maxDrawdownPercent', 'maxConsecutiveLosses', 'maxOpenExposurePercent', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'maxRiskPerTradePercent', 'maxDailyLossPercent', 'maxDrawdownPercent', 'maxConsecutiveLosses', 'maxOpenExposurePercent', 'updatedBy', 'updatedAt'])
+        && isValidId(data.id) && data.id == policyId
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.maxRiskPerTradePercent is number && data.maxRiskPerTradePercent > 0 && data.maxRiskPerTradePercent <= 10
+        && data.maxDailyLossPercent is number && data.maxDailyLossPercent > 0 && data.maxDailyLossPercent <= 25
+        && data.maxDrawdownPercent is number && data.maxDrawdownPercent > 0 && data.maxDrawdownPercent <= 50
+        && data.maxConsecutiveLosses is number && data.maxConsecutiveLosses >= 1 && data.maxConsecutiveLosses <= 20
+        && data.maxOpenExposurePercent is number && data.maxOpenExposurePercent > 0 && data.maxOpenExposurePercent <= 30
+        && data.updatedBy is string && data.updatedBy.size() <= 128
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRiskViolation(data, violationId) {
+      return data.keys().hasAll(['id', 'userId', 'policyRule', 'thresholdValue', 'actualValue', 'severity', 'acknowledged', 'createdAt'])
+        && data.keys().hasOnly(['id', 'userId', 'tradeId', 'policyRule', 'thresholdValue', 'actualValue', 'severity', 'acknowledged', 'createdAt'])
+        && isValidId(data.id) && data.id == violationId
+        && isValidId(data.userId)
+        && isOptString(data, 'tradeId', 128)
+        && data.policyRule is string && data.policyRule.size() >= 1 && data.policyRule.size() <= 120
+        && data.thresholdValue is number
+        && data.actualValue is number
+        && data.severity in ['warning', 'breach']
+        && data.acknowledged is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidPsychologyAssessment(data, assessmentId) {
+      return data.keys().hasAll(['id', 'userId', 'phase', 'emotionalState', 'confidenceLevel', 'fomoLevel', 'revengeTendency', 'followsStrategy', 'riskCalculated', 'createdAt'])
+        && data.keys().hasOnly(['id', 'userId', 'tradeId', 'phase', 'emotionalState', 'confidenceLevel', 'fomoLevel', 'revengeTendency', 'followsStrategy', 'riskCalculated', 'planFollowed', 'stopLossRespected', 'closedEmotionally', 'overtradingOccurred', 'notes', 'lessonsLearned', 'createdAt'])
+        && isValidId(data.id) && data.id == assessmentId
+        && isValidId(data.userId)
+        && isOptString(data, 'tradeId', 128)
+        && data.phase in ['pre_trade', 'post_trade']
+        && data.emotionalState in ['calm', 'focused', 'anxious', 'frustrated', 'overconfident', 'hesitant', 'fatigued']
+        && data.confidenceLevel is number && data.confidenceLevel >= 1 && data.confidenceLevel <= 10
+        && data.fomoLevel is number && data.fomoLevel >= 1 && data.fomoLevel <= 10
+        && data.revengeTendency is bool
+        && data.followsStrategy is bool
+        && data.riskCalculated is bool
+        && isOptBool(data, 'planFollowed')
+        && isOptBool(data, 'stopLossRespected')
+        && isOptBool(data, 'closedEmotionally')
+        && isOptBool(data, 'overtradingOccurred')
+        && isOptString(data, 'notes', 1500)
+        && isOptString(data, 'lessonsLearned', 1500)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidChallengeCycle(data, cycleId) {
+      return data.keys().hasAll(['id', 'title', 'durationDays', 'startDate', 'endDate', 'status', 'targetGrowthPercent', 'maxDrawdownPercent', 'maxRiskPerTradePercent', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'title', 'description', 'durationDays', 'startDate', 'endDate', 'status', 'targetGrowthPercent', 'maxDrawdownPercent', 'maxRiskPerTradePercent', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && data.id == cycleId
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && isOptString(data, 'description', 800)
+        && data.durationDays is number && data.durationDays >= 7 && data.durationDays <= 180
+        && data.startDate is string && data.startDate.size() <= 40
+        && data.endDate is string && data.endDate.size() <= 40
+        && data.status in ['upcoming', 'active', 'closed']
+        && data.targetGrowthPercent is number
+        && data.maxDrawdownPercent is number
+        && data.maxRiskPerTradePercent is number
+        && data.createdBy is string && data.createdBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidChallengeParticipant(data, participantId) {
+      return data.keys().hasAll(['id', 'cycleId', 'userId', 'studentName', 'accountId', 'openingBalance', 'currentBalance', 'netPnl', 'growthPercent', 'tradesCount', 'winsCount', 'maxDrawdownPercent', 'riskScore', 'disciplineScore', 'consistencyScore', 'overallScore', 'status', 'joinedAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'cycleId', 'userId', 'studentName', 'accountId', 'openingBalance', 'currentBalance', 'closingBalance', 'netPnl', 'growthPercent', 'tradesCount', 'winsCount', 'maxDrawdownPercent', 'riskScore', 'disciplineScore', 'consistencyScore', 'overallScore', 'mentorEvaluation', 'status', 'joinedAt', 'updatedAt'])
+        && isValidId(data.id) && data.id == participantId
+        && isValidId(data.cycleId)
+        && isValidId(data.userId)
+        && data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 120
+        && isValidId(data.accountId)
+        && data.openingBalance is number && data.openingBalance >= 0
+        && data.currentBalance is number
+        && isOptNumber(data, 'closingBalance')
+        && data.netPnl is number
+        && data.growthPercent is number
+        && data.tradesCount is number && data.tradesCount >= 0
+        && data.winsCount is number && data.winsCount >= 0
+        && data.maxDrawdownPercent is number && data.maxDrawdownPercent >= 0
+        && data.riskScore is number && data.riskScore >= 0 && data.riskScore <= 100
+        && data.disciplineScore is number && data.disciplineScore >= 0 && data.disciplineScore <= 100
+        && data.consistencyScore is number && data.consistencyScore >= 0 && data.consistencyScore <= 100
+        && data.overallScore is number && data.overallScore >= 0 && data.overallScore <= 100
+        && isOptString(data, 'mentorEvaluation', 1500)
+        && data.status in ['active', 'completed', 'withdrawn']
+        && data.joinedAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPerformanceSnapshot(data, snapshotId) {
+      return data.keys().hasAll(['id', 'userId', 'accountId', 'snapshotDate', 'balance', 'equity', 'drawdownPercent', 'createdAt'])
+        && data.keys().hasOnly(['id', 'userId', 'accountId', 'snapshotDate', 'balance', 'equity', 'drawdownPercent', 'createdAt'])
+        && isValidId(data.id) && data.id == snapshotId
+        && isValidId(data.userId)
+        && isValidId(data.accountId)
+        && data.snapshotDate is string && data.snapshotDate.size() <= 40
+        && data.balance is number
+        && data.equity is number
+        && data.drawdownPercent is number
+        && data.createdAt is timestamp;
+    }
+
+    function isValidMentorReview(data, reviewId) {
+      return data.keys().hasAll(['id', 'studentId', 'studentName', 'mentorId', 'mentorName', 'periodType', 'periodLabel', 'totalTrades', 'winningTrades', 'losingTrades', 'netPnl', 'accountGrowthPercent', 'winRate', 'avgRiskPercent', 'maxDrawdownPercent', 'riskViolationsCount', 'mentorRecommendations', 'createdAt'])
+        && data.keys().hasOnly(['id', 'studentId', 'studentName', 'mentorId', 'mentorName', 'periodType', 'periodLabel', 'cycleId', 'totalTrades', 'winningTrades', 'losingTrades', 'netPnl', 'accountGrowthPercent', 'winRate', 'avgRiskPercent', 'maxDrawdownPercent', 'bestInstrument', 'weakestInstrument', 'commonMistakes', 'riskViolationsCount', 'psychologyObservations', 'improvementsRequired', 'mentorRecommendations', 'createdAt'])
+        && isValidId(data.id) && data.id == reviewId
+        && isValidId(data.studentId)
+        && data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 120
+        && isValidId(data.mentorId)
+        && data.mentorName is string && data.mentorName.size() >= 1 && data.mentorName.size() <= 120
+        && data.periodType in ['weekly', 'monthly', 'challenge']
+        && data.periodLabel is string && data.periodLabel.size() >= 1 && data.periodLabel.size() <= 80
+        && isOptString(data, 'cycleId', 128)
+        && data.totalTrades is number && data.totalTrades >= 0
+        && data.winningTrades is number && data.winningTrades >= 0
+        && data.losingTrades is number && data.losingTrades >= 0
+        && data.netPnl is number
+        && data.accountGrowthPercent is number
+        && data.winRate is number
+        && data.avgRiskPercent is number
+        && data.maxDrawdownPercent is number
+        && isOptString(data, 'bestInstrument', 40)
+        && isOptString(data, 'weakestInstrument', 40)
+        && isOptString(data, 'commonMistakes', 1200)
+        && data.riskViolationsCount is number && data.riskViolationsCount >= 0
+        && isOptString(data, 'psychologyObservations', 1200)
+        && isOptString(data, 'improvementsRequired', 1200)
+        && data.mentorRecommendations is string && data.mentorRecommendations.size() >= 1 && data.mentorRecommendations.size() <= 1500
+        && data.createdAt is timestamp;
+    }
+
+    function isValidLearningMaterial(data, materialId) {
+      return data.keys().hasAll(['id', 'title', 'category', 'type', 'durationMinutes', 'difficulty', 'summary', 'published', 'orderIndex', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'title', 'category', 'type', 'durationMinutes', 'difficulty', 'summary', 'content', 'videoUrl', 'quizQuestions', 'published', 'orderIndex', 'createdBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && data.id == materialId
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 140
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 60
+        && data.type in ['lesson', 'video', 'quiz', 'exercise']
+        && data.durationMinutes is number && data.durationMinutes >= 1 && data.durationMinutes <= 600
+        && data.difficulty in ['foundation', 'intermediate', 'advanced']
+        && data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 500
+        && isOptString(data, 'content', 8000)
+        && isOptString(data, 'videoUrl', 500)
+        && (!( 'quizQuestions' in data ) || (data.quizQuestions is list && data.quizQuestions.size() <= 20))
+        && data.published is bool
+        && data.orderIndex is number
+        && data.createdBy is string && data.createdBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAssignment(data, submissionId) {
+      return data.keys().hasAll(['id', 'materialId', 'materialTitle', 'userId', 'studentName', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'materialId', 'materialTitle', 'userId', 'studentName', 'responseText', 'quizScore', 'status', 'mentorFeedback', 'reviewedBy', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && data.id == submissionId
+        && isValidId(data.materialId)
+        && data.materialTitle is string && data.materialTitle.size() >= 1 && data.materialTitle.size() <= 140
+        && isValidId(data.userId)
+        && data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 120
+        && isOptString(data, 'responseText', 4000)
+        && isOptNumber(data, 'quizScore')
+        && data.status in ['submitted', 'reviewed']
+        && isOptString(data, 'mentorFeedback', 1500)
+        && isOptString(data, 'reviewedBy', 128)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidNotification(data, notificationId) {
+      return data.keys().hasAll(['id', 'recipientId', 'type', 'title', 'message', 'read', 'createdAt'])
+        && data.keys().hasOnly(['id', 'recipientId', 'type', 'title', 'message', 'linkTab', 'read', 'createdAt'])
+        && isValidId(data.id) && data.id == notificationId
+        && isValidId(data.recipientId)
+        && data.type in ['mentor_feedback', 'risk_violation', 'weekly_review', 'challenge', 'lesson', 'announcement', 'reminder']
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 140
+        && data.message is string && data.message.size() >= 1 && data.message.size() <= 600
+        && isOptString(data, 'linkTab', 60)
+        && data.read is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAnnouncement(data, announcementId) {
+      return data.keys().hasAll(['id', 'title', 'body', 'category', 'pinned', 'authorId', 'authorName', 'createdAt'])
+        && data.keys().hasOnly(['id', 'title', 'body', 'category', 'pinned', 'sessionDate', 'authorId', 'authorName', 'createdAt'])
+        && isValidId(data.id) && data.id == announcementId
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 140
+        && data.body is string && data.body.size() >= 1 && data.body.size() <= 3000
+        && data.category in ['community', 'challenge', 'education', 'session']
+        && data.pinned is bool
+        && isOptString(data, 'sessionDate', 40)
+        && isValidId(data.authorId)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 120
+        && data.createdAt is timestamp;
+    }
+
+    function isValidLeaderboardEntry(data, entryId) {
+      return data.keys().hasAll(['userId', 'displayAlias', 'growthPercent', 'winRate', 'consistencyScore', 'riskScore', 'disciplineScore', 'overallScore', 'improvementDelta', 'eligibleTradesCount', 'optedIn', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'displayAlias', 'growthPercent', 'winRate', 'consistencyScore', 'riskScore', 'disciplineScore', 'overallScore', 'improvementDelta', 'eligibleTradesCount', 'optedIn', 'updatedAt'])
+        && isValidId(data.userId) && data.userId == entryId
+        && data.displayAlias is string && data.displayAlias.size() >= 1 && data.displayAlias.size() <= 80
+        && data.growthPercent is number
+        && data.winRate is number
+        && data.consistencyScore is number
+        && data.riskScore is number
+        && data.disciplineScore is number
+        && data.overallScore is number
+        && data.improvementDelta is number
+        && data.eligibleTradesCount is number && data.eligibleTradesCount >= 0
+        && data.optedIn is bool
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAuditLog(data, logId) {
+      return data.keys().hasAll(['id', 'actorId', 'action', 'targetType', 'createdAt'])
+        && data.keys().hasOnly(['id', 'actorId', 'actorEmail', 'action', 'targetType', 'targetId', 'details', 'createdAt'])
+        && isValidId(data.id) && data.id == logId
+        && isValidId(data.actorId)
+        && isOptString(data, 'actorEmail', 254)
+        && data.action is string && data.action.size() >= 1 && data.action.size() <= 100
+        && data.targetType is string && data.targetType.size() >= 1 && data.targetType.size() <= 60
+        && isOptString(data, 'targetId', 128)
+        && isOptString(data, 'details', 1000)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSystemSettings(data, settingId) {
+      return data.keys().hasAll(['id', 'programmeName', 'challengeDefaultDays', 'weightRiskManagement', 'weightDiscipline', 'weightConsistency', 'weightProfitability', 'weightJournalCompletion', 'requireMentorApproval', 'minTradesForLeaderboard', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'programmeName', 'challengeDefaultDays', 'weightRiskManagement', 'weightDiscipline', 'weightConsistency', 'weightProfitability', 'weightJournalCompletion', 'requireMentorApproval', 'minTradesForLeaderboard', 'updatedBy', 'updatedAt'])
+        && isValidId(data.id) && data.id == settingId
+        && data.programmeName is string && data.programmeName.size() >= 1 && data.programmeName.size() <= 100
+        && data.challengeDefaultDays is number && data.challengeDefaultDays >= 7 && data.challengeDefaultDays <= 180
+        && data.weightRiskManagement is number
+        && data.weightDiscipline is number
+        && data.weightConsistency is number
+        && data.weightProfitability is number
+        && data.weightJournalCompletion is number
+        && data.requireMentorApproval is bool
+        && data.minTradesForLeaderboard is number && data.minTradesForLeaderboard >= 0
+        && data.updatedBy is string && data.updatedBy.size() <= 128
+        && data.updatedAt is timestamp;
+    }
+
+    // =========================================================================
+    // Collection Rules
+    // =========================================================================
+
+    // /admins/{adminId}
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && (isOwner(adminId) || isAdmin());
+      allow list: if isBootstrappedAdminEmail();
+      allow create, update: if isAdmin()
+        && isValidId(adminId)
+        && isValidAdminRecord(incoming(), adminId)
+        && incoming().createdAt == request.time;
+      allow delete: if isAdmin() && isValidId(adminId) && adminId != request.auth.uid;
+    }
+
+    // /users/{userId}
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isBootstrappedAdminEmail();
+      allow create: if isVerified() && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserAccount(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (incoming().role == 'student' || isBootstrappedAdminEmail())
+        && incoming().status in ['active', 'pending'];
+      allow update: if isVerified() && isValidId(userId)
+        && isValidUserAccount(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            isOwner(userId)
+            && incoming().role == existing().role
+            && incoming().status == existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'publicLeaderboardOptIn', 'photoUrl', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(userId);
+
+      // /users/{userId}/private/{docId} (Strict PII Isolation)
+      match /private/{docId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(docId) && (isOwner(userId) || isAdmin());
+        allow list: if false;
+        allow create, update: if isVerified() && isValidId(userId) && isValidId(docId)
+          && isOwner(userId)
+          && isValidPrivateUserInfo(incoming(), userId)
+          && incoming().updatedAt == request.time;
+        allow delete: if isAdmin() && isValidId(userId) && isValidId(docId);
+      }
+    }
+
+    // /studentProfiles/{userId}
+    match /studentProfiles/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isBootstrappedAdminEmail();
+      allow create: if isVerified() && isValidId(userId)
+        && isOwner(userId)
+        && isValidStudentProfile(incoming(), userId)
+        && incoming().status in ['active', 'pending']
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(userId)
+        && isValidStudentProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            isOwner(userId)
+            && incoming().status == existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'fullName', 'experienceLevel', 'preferredInstruments', 'brokerName',
+              'publicLeaderboardOptIn', 'completedLessonIds', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    // /tradingAccounts/{accountId}
+    match /tradingAccounts/{accountId} {
+      allow get: if isSignedIn() && isValidId(accountId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create: if isVerified() && isValidId(accountId)
+        && isValidTradingAccount(incoming(), accountId)
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerified() && isValidId(accountId)
+        && isValidTradingAccount(incoming(), accountId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().userId == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'brokerName', 'currentBalance', 'isDefault', 'updatedAt'])
+          )
+        );
+      allow delete: if isVerified() && isValidId(accountId) && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // /accountTransactions/{txId}
+    match /accountTransactions/{txId} {
+      allow get: if isSignedIn() && isValidId(txId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create: if isVerified() && isValidId(txId)
+        && isValidAccountTransaction(incoming(), txId)
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/tradingAccounts/$(incoming().accountId))
+        && get(/databases/$(database)/documents/tradingAccounts/$(incoming().accountId)).data.userId == request.auth.uid;
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(txId);
+    }
+
+    // /trades/{tradeId}
+    match /trades/{tradeId} {
+      allow get: if isSignedIn() && isValidId(tradeId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create: if isVerified() && isValidId(tradeId)
+        && isValidTradeRecord(incoming(), tradeId)
+        && incoming().userId == request.auth.uid
+        && incoming().editCount == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/tradingAccounts/$(incoming().accountId))
+        && get(/databases/$(database)/documents/tradingAccounts/$(incoming().accountId)).data.userId == request.auth.uid;
+      allow update: if isVerified() && isValidId(tradeId)
+        && isValidTradeRecord(incoming(), tradeId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().userId == request.auth.uid
+            && incoming().editCount == existing().editCount + 1
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'challengeCycleId', 'instrument', 'direction', 'entryPrice', 'stopLoss',
+              'takeProfit', 'exitPrice', 'lotSize', 'accountBalanceAtEntry',
+              'plannedRiskPercent', 'plannedRiskAmount', 'riskRewardRatio',
+              'grossPnl', 'commission', 'swap', 'netPnl', 'rMultiple',
+              'session', 'strategy', 'marketCondition', 'status', 'openedAt',
+              'closedAt', 'entryJustification', 'exitJustification', 'observations',
+              'lessonsLearned', 'planFollowed', 'riskViolation', 'editCount', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isVerified() && isValidId(tradeId) && (isAdmin() || (existing().userId == request.auth.uid && existing().status == 'draft'));
+    }
+
+    // /tradeEditLogs/{logId}
+    match /tradeEditLogs/{logId} {
+      allow get: if isSignedIn() && isValidId(logId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create: if isVerified() && isValidId(logId)
+        && isValidTradeEditLog(incoming(), logId)
+        && incoming().editorId == request.auth.uid
+        && (incoming().userId == request.auth.uid || isAdmin())
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // /tradeScreenshots/{screenshotId}
+    match /tradeScreenshots/{screenshotId} {
+      allow get: if isSignedIn() && isValidId(screenshotId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create: if isVerified() && isValidId(screenshotId)
+        && isValidTradeScreenshot(incoming(), screenshotId)
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/trades/$(incoming().tradeId))
+        && get(/databases/$(database)/documents/trades/$(incoming().tradeId)).data.userId == request.auth.uid;
+      allow update: if isVerified() && isValidId(screenshotId)
+        && isValidTradeScreenshot(incoming(), screenshotId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().tradeId == existing().tradeId
+        && incoming().createdAt == existing().createdAt
+        && (
+          isAdmin() ||
+          (existing().userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['caption', 'marketStructureNotes', 'stage']))
+        );
+      allow delete: if isVerified() && isValidId(screenshotId) && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    // /tradeReviews/{reviewId}
+    match /tradeReviews/{reviewId} {
+      allow get: if isSignedIn() && isValidId(reviewId) && (existing().studentId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().studentId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create: if isAdmin() && isValidId(reviewId)
+        && isValidTradeReview(incoming(), reviewId)
+        && incoming().mentorId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin() && isValidId(reviewId)
+        && isValidTradeReview(incoming(), reviewId)
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidId(reviewId);
+    }
+
+    // /riskPolicies/{policyId}
+    match /riskPolicies/{policyId} {
+      allow get: if isSignedIn() && isValidId(policyId);
+      allow list: if isSignedIn();
+      allow create, update: if isAdmin() && isValidId(policyId)
+        && isValidRiskPolicy(incoming(), policyId)
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidId(policyId);
+    }
+
+    // /riskViolations/{violationId}
+    match /riskViolations/{violationId} {
+      allow get: if isSignedIn() && isValidId(violationId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create: if isVerified() && isValidId(violationId)
+        && isValidRiskViolation(incoming(), violationId)
+        && (incoming().userId == request.auth.uid || isAdmin())
+        && incoming().createdAt == request.time;
+      allow update: if isVerified() && isValidId(violationId)
+        && isValidRiskViolation(incoming(), violationId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && (
+          isAdmin() ||
+          (existing().userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['acknowledged']))
+        );
+      allow delete: if isAdmin() && isValidId(violationId);
+    }
+
+    // /psychologyAssessments/{assessmentId}
+    match /psychologyAssessments/{assessmentId} {
+      allow get: if isSignedIn() && isValidId(assessmentId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create: if isVerified() && isValidId(assessmentId)
+        && isValidPsychologyAssessment(incoming(), assessmentId)
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if isVerified() && isValidId(assessmentId)
+        && isValidPsychologyAssessment(incoming(), assessmentId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && (
+          isAdmin() ||
+          (existing().userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['notes', 'lessonsLearned']))
+        );
+      allow delete: if isAdmin() && isValidId(assessmentId);
+    }
+
+    // /challengeCycles/{cycleId}
+    match /challengeCycles/{cycleId} {
+      allow get: if isSignedIn() && isValidId(cycleId);
+      allow list: if isSignedIn();
+      allow create: if isAdmin() && isValidId(cycleId)
+        && isValidChallengeCycle(incoming(), cycleId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin() && isValidId(cycleId)
+        && isValidChallengeCycle(incoming(), cycleId)
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidId(cycleId);
+    }
+
+    // /challengeParticipants/{participantId}
+    match /challengeParticipants/{participantId} {
+      allow get: if isSignedIn() && isValidId(participantId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create: if isVerified() && isValidId(participantId)
+        && isValidChallengeParticipant(incoming(), participantId)
+        && (incoming().userId == request.auth.uid || isAdmin())
+        && incoming().joinedAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/challengeCycles/$(incoming().cycleId));
+      allow update: if isVerified() && isValidId(participantId)
+        && isValidChallengeParticipant(incoming(), participantId)
+        && incoming().id == existing().id
+        && incoming().cycleId == existing().cycleId
+        && incoming().userId == existing().userId
+        && incoming().joinedAt == existing().joinedAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().userId == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'currentBalance', 'netPnl', 'growthPercent', 'tradesCount', 'winsCount',
+              'maxDrawdownPercent', 'riskScore', 'disciplineScore', 'consistencyScore',
+              'overallScore', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(participantId);
+    }
+
+    // /performanceSnapshots/{snapshotId}
+    match /performanceSnapshots/{snapshotId} {
+      allow get: if isSignedIn() && isValidId(snapshotId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create: if isVerified() && isValidId(snapshotId)
+        && isValidPerformanceSnapshot(incoming(), snapshotId)
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(snapshotId);
+    }
+
+    // /mentorReviews/{reviewId}
+    match /mentorReviews/{reviewId} {
+      allow get: if isSignedIn() && isValidId(reviewId) && (existing().studentId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().studentId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create: if isAdmin() && isValidId(reviewId)
+        && isValidMentorReview(incoming(), reviewId)
+        && incoming().mentorId == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if isAdmin() && isValidId(reviewId)
+        && isValidMentorReview(incoming(), reviewId)
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(reviewId);
+    }
+
+    // /learningMaterials/{materialId}
+    match /learningMaterials/{materialId} {
+      allow get: if isSignedIn() && isValidId(materialId) && (existing().published == true || isAdmin());
+      allow list: if isSignedIn() && (existing().published == true || isBootstrappedAdminEmail());
+      allow create: if isAdmin() && isValidId(materialId)
+        && isValidLearningMaterial(incoming(), materialId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin() && isValidId(materialId)
+        && isValidLearningMaterial(incoming(), materialId)
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidId(materialId);
+    }
+
+    // /assignments/{submissionId}
+    match /assignments/{submissionId} {
+      allow get: if isSignedIn() && isValidId(submissionId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create: if isVerified() && isValidId(submissionId)
+        && isValidAssignment(incoming(), submissionId)
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'submitted'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/learningMaterials/$(incoming().materialId));
+      allow update: if isVerified() && isValidId(submissionId)
+        && isValidAssignment(incoming(), submissionId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().materialId == existing().materialId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().userId == request.auth.uid
+            && existing().status == 'submitted'
+            && incoming().status == 'submitted'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['responseText', 'quizScore', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(submissionId);
+    }
+
+    // /notifications/{notificationId}
+    match /notifications/{notificationId} {
+      allow get: if isSignedIn() && isValidId(notificationId) && (existing().recipientId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().recipientId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create: if isVerified() && isValidId(notificationId)
+        && isValidNotification(incoming(), notificationId)
+        && (incoming().recipientId == request.auth.uid || isAdmin())
+        && incoming().createdAt == request.time;
+      allow update: if isVerified() && isValidId(notificationId)
+        && isValidNotification(incoming(), notificationId)
+        && incoming().id == existing().id
+        && incoming().recipientId == existing().recipientId
+        && incoming().createdAt == existing().createdAt
+        && (
+          isAdmin() ||
+          (existing().recipientId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['read']))
+        );
+      allow delete: if isVerified() && isValidId(notificationId) && (existing().recipientId == request.auth.uid || isAdmin());
+    }
+
+    // /announcements/{announcementId}
+    match /announcements/{announcementId} {
+      allow get: if isSignedIn() && isValidId(announcementId);
+      allow list: if isSignedIn();
+      allow create: if isAdmin() && isValidId(announcementId)
+        && isValidAnnouncement(incoming(), announcementId)
+        && incoming().authorId == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if isAdmin() && isValidId(announcementId)
+        && isValidAnnouncement(incoming(), announcementId)
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin() && isValidId(announcementId);
+    }
+
+    // /leaderboardEntries/{userId}
+    match /leaderboardEntries/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (existing().optedIn == true || existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().optedIn == true || existing().userId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create, update: if isVerified() && isValidId(userId)
+        && isValidLeaderboardEntry(incoming(), userId)
+        && (isOwner(userId) || isAdmin())
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    // /auditLogs/{logId}
+    match /auditLogs/{logId} {
+      allow get: if isAdmin() && isValidId(logId);
+      allow list: if isBootstrappedAdminEmail();
+      allow create: if isVerified() && isValidId(logId)
+        && isValidAuditLog(incoming(), logId)
+        && incoming().actorId == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // /systemSettings/{settingId}
+    match /systemSettings/{settingId} {
+      allow get: if isSignedIn() && isValidId(settingId);
+      allow list: if isSignedIn();
+      allow create, update: if isAdmin() && isValidId(settingId)
+        && isValidSystemSettings(incoming(), settingId)
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin() && isValidId(settingId);
+    }
+  }
+}
