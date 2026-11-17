@@ -2,6 +2,7 @@ import React from 'react';
 import { ShieldAlert } from 'lucide-react';
 import { useMentorship } from '../../context/MentorshipContext';
 import type { AdminTab } from '../AppShell';
+import { AdminActivityView } from './AdminActivityView';
 import {
   AdminOverview,
   AdminReviewsView,
@@ -46,6 +47,8 @@ export const AdminWorkspace: React.FC<{
   switch (tab) {
     case 'overview':
       return <AdminOverview onNavigate={onNavigate} />;
+    case 'activity':
+      return <AdminActivityView />;
     case 'students':
       return <AdminStudentsView />;
     case 'reviews':

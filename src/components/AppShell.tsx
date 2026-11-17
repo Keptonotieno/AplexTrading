@@ -10,7 +10,6 @@ import {
   Crown,
   FileSpreadsheet,
   Home,
-  Lock,
   LogOut,
   Menu,
   Moon,
@@ -18,19 +17,14 @@ import {
   Settings,
   Shield,
   ShieldAlert,
+  ShieldCheck,
   Sun,
   Trophy,
   Users,
   Wrench,
   X,
 } from 'lucide-react';
-import {
-  GoogleAuthProvider,
-  signInWithEmailAndPassword,
-  signInWithPopup,
-} from 'firebase/auth';
 import { useMentorship } from '../context/MentorshipContext';
-import { auth } from '../lib/firebase';
 import { formatAccountTypeLabel, formatPlainCurrency } from '../lib/forexCalculations';
 
 export type StudentTab =
@@ -49,6 +43,7 @@ export type StudentTab =
 
 export type AdminTab =
   | 'overview'
+  | 'activity'
   | 'students'
   | 'reviews'
   | 'risk_psych'
@@ -98,12 +93,6 @@ export const AppShell: React.FC<AppShellProps> = ({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [adminLoginOpen, setAdminLoginOpen] = useState(false);
-  const [adminEmail, setAdminEmail] = useState('');
-  const [adminPassword, setAdminPassword] = useState('');
-  const [adminModalMsg, setAdminModalMsg] = useState<string | null>(null);
-  const [adminHelpUrl, setAdminHelpUrl] = useState<string | null>(null);
-  const [verifyingAdmin, setVerifyingAdmin] = useState(false);
 
   const activeCycle = useMemo(
     () => challengeCycles.find((c) => c.status === 'active') || challengeCycles[0],
@@ -120,124 +109,13 @@ export const AppShell: React.FC<AppShellProps> = ({
     return { day: elapsedDays, total, percent, title: `${total}-Day Challenge` };
   }, [activeCycle]);
 
-  const handleAdminClick = async () => {
+  const handleAdminToggle = () => {
+    if (!isVerifiedAdmin) return;
     if (workspaceMode === 'admin') {
       setWorkspaceMode('student');
-      return;
-    }
-
-    if (isVerifiedAdmin) {
-      setVerifyingAdmin(true);
-      try {
-        const token = await auth.currentUser?.getIdToken();
-        if (token) {
-          const res = await fetch('/api/auth/verify-admin', {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (res.ok) {
-            setWorkspaceMode('admin');
-            setAdminTab('overview');
-            setVerifyingAdmin(false);
-            return;
-          }
-        }
-      } catch {
-        // Fall through to Admin login modal
-      } finally {
-        setVerifyingAdmin(false);
-      }
-    }
-
-    setAdminModalMsg(null);
-    setAdminEmail('');
-    setAdminPassword('');
-    setAdminLoginOpen(true);
-  };
-
-  const handleAdminCredentialSignIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!adminEmail.trim() || !adminPassword) {
-      setAdminModalMsg('Enter both your administrator email address and password.');
-      return;
-    }
-    setVerifyingAdmin(true);
-    setAdminModalMsg(null);
-    setAdminHelpUrl(null);
-    try {
-      if (typeof window !== 'undefined') sessionStorage.setItem('fm_requested_admin', '1');
-      const cred = await signInWithEmailAndPassword(auth, adminEmail.trim(), adminPassword);
-      if (!cred.user.emailVerified) {
-        if (typeof window !== 'undefined') sessionStorage.removeItem('fm_requested_admin');
-        setAdminModalMsg('Email verification required before accessing the Administrator Portal.');
-        return;
-      }
-      const token = await cred.user.getIdToken(true);
-      const res = await fetch('/api/auth/verify-admin', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        if (typeof window !== 'undefined') sessionStorage.removeItem('fm_requested_admin');
-        setAdminModalMsg(
-          'Access Denied: This account is not authorized as a Mentor / Administrator.'
-        );
-        return;
-      }
-      setAdminLoginOpen(false);
-      setAdminPassword('');
+    } else {
       setWorkspaceMode('admin');
       setAdminTab('overview');
-    } catch (err: unknown) {
-      if (typeof window !== 'undefined') sessionStorage.removeItem('fm_requested_admin');
-      const code = (err as { code?: string })?.code;
-      if (code === 'auth/operation-not-allowed') {
-        setAdminHelpUrl(
-          'https://console.firebase.google.com/project/gen-lang-client-0535362261/authentication/providers'
-        );
-        setAdminModalMsg(
-          'Email/Password sign-in is disabled in Firebase Console for project gen-lang-client-0535362261. Enable Email/Password in Firebase Authentication or sign in with Google below.'
-        );
-      } else if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
-        setAdminHelpUrl(
-          'https://console.firebase.google.com/project/gen-lang-client-0535362261/authentication/users'
-        );
-        setAdminModalMsg(
-          'No matching Firebase Auth user found or invalid password. Ensure the administrator account exists under Firebase Console → Authentication → Users.'
-        );
-      } else {
-        setAdminModalMsg(err instanceof Error ? err.message : 'Unable to authenticate administrator.');
-      }
-    } finally {
-      setVerifyingAdmin(false);
-    }
-  };
-
-  const handleAdminGoogleSignIn = async () => {
-    setVerifyingAdmin(true);
-    setAdminModalMsg(null);
-    try {
-      if (typeof window !== 'undefined') sessionStorage.setItem('fm_requested_admin', '1');
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
-      const cred = await signInWithPopup(auth, provider);
-      const token = await cred.user.getIdToken(true);
-      const res = await fetch('/api/auth/verify-admin', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) {
-        if (typeof window !== 'undefined') sessionStorage.removeItem('fm_requested_admin');
-        setAdminModalMsg(
-          'Access Denied: Signed-in Google account does not hold verified Administrator privileges.'
-        );
-        return;
-      }
-      setAdminLoginOpen(false);
-      setWorkspaceMode('admin');
-      setAdminTab('overview');
-    } catch (err: unknown) {
-      if (typeof window !== 'undefined') sessionStorage.removeItem('fm_requested_admin');
-      setAdminModalMsg(err instanceof Error ? err.message : 'Google authentication failed.');
-    } finally {
-      setVerifyingAdmin(false);
     }
   };
 
@@ -352,6 +230,7 @@ export const AppShell: React.FC<AppShellProps> = ({
     icon: React.ComponentType<{ className?: string }>;
   }> = [
     { id: 'overview', label: 'Mentor Overview', icon: Home },
+    { id: 'activity', label: 'All User Activities', icon: Activity },
     { id: 'students', label: 'Students & Profiles', icon: Users },
     { id: 'reviews', label: 'Journal & Chart Reviews', icon: Wrench },
     { id: 'risk_psych', label: 'Risk & Psychology', icon: ShieldAlert },
@@ -359,7 +238,7 @@ export const AppShell: React.FC<AppShellProps> = ({
     { id: 'learning_cms', label: 'Learning Centre CMS', icon: BookOpen },
     { id: 'reports', label: 'Weekly & Monthly Reports', icon: FileSpreadsheet },
     { id: 'announcements', label: 'Announcements', icon: Bell },
-    { id: 'audit_settings', label: 'Audit Logs & Settings', icon: Activity },
+    { id: 'audit_settings', label: 'Audit Logs & Settings', icon: Settings },
   ];
 
   const displayName = studentProfile?.fullName || userAccount?.displayName || firebaseUser?.displayName || 'Trader';
@@ -412,7 +291,7 @@ export const AppShell: React.FC<AppShellProps> = ({
 
         {/* Navigation Links */}
         <nav className="space-y-1">
-          {workspaceMode === 'student'
+          {workspaceMode === 'student' || !isVerifiedAdmin
             ? studentNav.map((item) => {
                 const Icon = item.icon;
                 const active = studentTab === item.id;
@@ -467,9 +346,9 @@ export const AppShell: React.FC<AppShellProps> = ({
         </nav>
       </div>
 
-      {/* Bottom Pinned Challenge Card (Student) or Return to Student View (Admin) */}
+      {/* Bottom Pinned Challenge Card (Student) or Return to Student View (Verified Admin only) */}
       <div className="p-4">
-        {workspaceMode === 'student' ? (
+        {workspaceMode === 'student' || !isVerifiedAdmin ? (
           <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/90 space-y-2.5">
             <div className="flex items-center gap-2">
               <Crown className="w-4 h-4 text-amber-500 shrink-0" />
@@ -619,25 +498,26 @@ export const AppShell: React.FC<AppShellProps> = ({
               {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
 
-            {/* Discreet Private Administrator Access Point (Top-Right) */}
-            <button
-              type="button"
-              disabled={verifyingAdmin}
-              onClick={handleAdminClick}
-              title={
-                workspaceMode === 'admin'
-                  ? 'Exit Mentor Admin Console'
-                  : 'Private Administrator Access'
-              }
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
-                workspaceMode === 'admin'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
-              }`}
-            >
-              <span>{workspaceMode === 'admin' ? 'Mentor Mode' : 'Admin'}</span>
-              <Lock className="w-3.5 h-3.5 opacity-75" />
-            </button>
+            {/* Admin Workspace Switcher — strictly visible to verified Administrators only */}
+            {isVerifiedAdmin && (
+              <button
+                type="button"
+                onClick={handleAdminToggle}
+                title={
+                  workspaceMode === 'admin'
+                    ? 'Switch to Student View'
+                    : 'Open Mentor & Admin Console'
+                }
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                  workspaceMode === 'admin'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-100 dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-800'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>{workspaceMode === 'admin' ? 'Admin Console' : 'Admin Dashboard'}</span>
+              </button>
+            )}
 
             <div className="h-5 w-px bg-slate-200 dark:bg-slate-800" />
 
@@ -744,125 +624,6 @@ export const AppShell: React.FC<AppShellProps> = ({
           {children}
         </main>
       </div>
-
-      {/* Admin Portal Login Modal */}
-      {adminLoginOpen && (
-        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="max-w-md w-full bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-xl p-6 space-y-5">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-blue-600/15 text-blue-500 flex items-center justify-center shrink-0">
-                  <Lock className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-base font-semibold text-slate-900 dark:text-white">
-                    Admin Portal Sign In
-                  </h3>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Authorized Mentor & Administrator credentials required
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setAdminLoginOpen(false);
-                  setAdminModalMsg(null);
-                }}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white"
-                aria-label="Close admin login"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {adminModalMsg && (
-              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-600 dark:text-red-400 flex items-start gap-2">
-                <ShieldAlert className="w-4 h-4 shrink-0 mt-0.5" />
-                <div className="space-y-1.5">
-                  <p>{adminModalMsg}</p>
-                  {adminHelpUrl && (
-                    <a
-                      href={adminHelpUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-block font-semibold underline text-red-700 dark:text-red-300"
-                    >
-                      Open Firebase Authentication Settings →
-                    </a>
-                  )}
-                </div>
-              </div>
-            )}
-
-            <form onSubmit={handleAdminCredentialSignIn} className="space-y-3.5">
-              <div>
-                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                  Administrator Email
-                </label>
-                <input
-                  type="email"
-                  required
-                  value={adminEmail}
-                  onChange={(e) => setAdminEmail(e.target.value)}
-                  placeholder="keptonotieno@gmail.com"
-                  className="w-full px-3.5 py-2 text-sm rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-                  Password
-                </label>
-                <input
-                  type="password"
-                  required
-                  value={adminPassword}
-                  onChange={(e) => setAdminPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full px-3.5 py-2 text-sm rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={verifyingAdmin}
-                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-xs font-medium transition-colors"
-              >
-                <Lock className="w-3.5 h-3.5" />
-                {verifyingAdmin ? 'Verifying Credentials...' : 'Login to Admin Dashboard'}
-              </button>
-            </form>
-
-            <div className="relative flex items-center">
-              <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
-              <span className="shrink-0 mx-3 text-[11px] text-slate-400">or</span>
-              <div className="flex-grow border-t border-slate-200 dark:border-slate-800" />
-            </div>
-
-            <button
-              type="button"
-              disabled={verifyingAdmin}
-              onClick={handleAdminGoogleSignIn}
-              className="w-full py-2 px-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#0B111E] hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 transition-colors"
-            >
-              Sign In with Authorized Google Account
-            </button>
-
-            <div className="p-3 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 space-y-1 text-[11px] text-slate-500">
-              <div className="flex justify-between gap-2">
-                <span>Current Session</span>
-                <span className="font-mono text-slate-700 dark:text-slate-300 truncate">
-                  {firebaseUser?.email || 'Not signed in'}
-                </span>
-              </div>
-              <p className="leading-relaxed">
-                Admin access is validated against Firebase Authentication and server-side security rules.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

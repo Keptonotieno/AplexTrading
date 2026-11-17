@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import {
   collection,
@@ -95,6 +95,7 @@ interface MentorshipContextValue {
   adminUsers: UserAccount[];
   adminProfiles: StudentProfile[];
   adminAllTrades: TradeRecord[];
+  adminAllTradeEditLogs: TradeEditLog[];
   adminAllAccounts: TradingAccount[];
   adminAllTransactions: AccountTransaction[];
   adminAllScreenshots: TradeScreenshot[];
@@ -116,7 +117,6 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
   const [authReady, setAuthReady] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
   const [isAdminDoc, setIsAdminDoc] = useState(false);
-  const [workspaceMode, setWorkspaceMode] = useState<'student' | 'admin'>('student');
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const saved = typeof window !== 'undefined' ? localStorage.getItem('fm_theme') : null;
@@ -172,6 +172,7 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
   const [adminUsers, setAdminUsers] = useState<UserAccount[]>([]);
   const [adminProfiles, setAdminProfiles] = useState<StudentProfile[]>([]);
   const [adminAllTrades, setAdminAllTrades] = useState<TradeRecord[]>([]);
+  const [adminAllTradeEditLogs, setAdminAllTradeEditLogs] = useState<TradeEditLog[]>([]);
   const [adminAllAccounts, setAdminAllAccounts] = useState<TradingAccount[]>([]);
   const [adminAllTransactions, setAdminAllTransactions] = useState<AccountTransaction[]>([]);
   const [adminAllScreenshots, setAdminAllScreenshots] = useState<TradeScreenshot[]>([]);
@@ -182,6 +183,7 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
   const [adminAllAssignments, setAdminAllAssignments] = useState<AssignmentSubmission[]>([]);
   const [adminAllMentorReviews, setAdminAllMentorReviews] = useState<MentorReview[]>([]);
   const [adminAuditLogs, setAdminAuditLogs] = useState<AuditLog[]>([]);
+  const autoRoutedAdminUidRef = useRef<string | null>(null);
 
   // Auth listener
   useEffect(() => {
@@ -204,7 +206,8 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
         setMyAssignments([]);
         setNotifications([]);
         setIsAdminDoc(false);
-        setWorkspaceMode('student');
+        setWorkspaceModeState('student');
+        autoRoutedAdminUidRef.current = null;
         setUserAccountChecked(true);
         setLoadingData(false);
       } else {
@@ -215,13 +218,28 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
     return () => unsub();
   }, []);
 
+  const [workspaceModeState, setWorkspaceModeState] = useState<'student' | 'admin'>('student');
+
   const isVerifiedAdmin = Boolean(
     firebaseUser &&
       firebaseUser.emailVerified &&
       (isAllowedAdminEmail(firebaseUser.email) || isAdminDoc)
   );
 
-  // Bootstrap admin defaults when verified admin signs in, and honor explicit Admin Portal login intent
+  const setWorkspaceMode = useCallback(
+    (mode: 'student' | 'admin') => {
+      if (mode === 'admin' && !isVerifiedAdmin) {
+        setWorkspaceModeState('student');
+        return;
+      }
+      setWorkspaceModeState(mode);
+    },
+    [isVerifiedAdmin]
+  );
+
+  const workspaceMode: 'student' | 'admin' = isVerifiedAdmin ? workspaceModeState : 'student';
+
+  // Bootstrap admin defaults when verified admin signs in, and auto-enter Admin Console on verified admin sign-in
   useEffect(() => {
     if (authReady && firebaseUser && firebaseUser.emailVerified && isAllowedAdminEmail(firebaseUser.email)) {
       ensureAdminDefaults(
@@ -234,15 +252,26 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     if (!authReady || !firebaseUser) return;
-    if (typeof window !== 'undefined' && sessionStorage.getItem('fm_requested_admin') === '1') {
-      if (isVerifiedAdmin) {
+    const requestedAdmin =
+      typeof window !== 'undefined' && sessionStorage.getItem('fm_requested_admin') === '1';
+
+    if (isVerifiedAdmin) {
+      if (requestedAdmin) {
         sessionStorage.removeItem('fm_requested_admin');
-        setWorkspaceMode('admin');
-      } else if (userAccountChecked) {
-        sessionStorage.removeItem('fm_requested_admin');
+        autoRoutedAdminUidRef.current = firebaseUser.uid;
+        setWorkspaceModeState('admin');
+      } else if (
+        autoRoutedAdminUidRef.current !== firebaseUser.uid &&
+        (isAllowedAdminEmail(firebaseUser.email) || (userAccountChecked && !userAccount))
+      ) {
+        autoRoutedAdminUidRef.current = firebaseUser.uid;
+        setWorkspaceModeState('admin');
       }
+    } else if (requestedAdmin && userAccountChecked) {
+      sessionStorage.removeItem('fm_requested_admin');
+      setWorkspaceModeState('student');
     }
-  }, [authReady, firebaseUser, isVerifiedAdmin, userAccountChecked]);
+  }, [authReady, firebaseUser, isVerifiedAdmin, userAccountChecked, userAccount]);
 
   // Core user & student listeners (attached only when authReady && firebaseUser && emailVerified)
   useEffect(() => {
@@ -496,6 +525,13 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
     );
     unsubs.push(
       onSnapshot(
+        collection(db, 'tradeEditLogs'),
+        (snap) => setAdminAllTradeEditLogs(snap.docs.map((d) => d.data() as TradeEditLog)),
+        (err) => handleFirestoreError(err, OperationType.LIST, 'tradeEditLogs')
+      )
+    );
+    unsubs.push(
+      onSnapshot(
         collection(db, 'tradingAccounts'),
         (snap) => setAdminAllAccounts(snap.docs.map((d) => d.data() as TradingAccount)),
         (err) => handleFirestoreError(err, OperationType.LIST, 'tradingAccounts')
@@ -704,6 +740,7 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
         adminUsers,
         adminProfiles,
         adminAllTrades,
+        adminAllTradeEditLogs,
         adminAllAccounts,
         adminAllTransactions,
         adminAllScreenshots,

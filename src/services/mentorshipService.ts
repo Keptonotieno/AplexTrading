@@ -278,23 +278,33 @@ export async function createTradingAccount(params: {
       `${formatAccountTypeLabel(params.accountType)} accounts require a minimum starting balance of $${minBal}.`
     );
   }
+  const batch = writeBatch(db);
+  const safeName = truncateStr(params.name, 80) || 'Trading Account';
+  batch.set(
+    doc(db, 'tradingAccounts', id),
+    cleanPayload({
+      id,
+      userId: params.userId,
+      name: safeName,
+      currency: params.currency,
+      brokerName: truncateStr(params.brokerName, 80),
+      accountType: params.accountType,
+      initialBalance: bal,
+      currentBalance: bal,
+      isDefault: params.isDefault,
+      createdAt: tsNow(),
+      updatedAt: tsNow(),
+    })
+  );
+  queueAuditLogInBatch(batch, {
+    actorId: params.userId,
+    action: 'trading_account_created',
+    targetType: 'tradingAccount',
+    targetId: id,
+    details: `Created ${formatAccountTypeLabel(params.accountType)} account "${safeName}" (${params.currency} ${bal})`,
+  });
   try {
-    await setDoc(
-      doc(db, 'tradingAccounts', id),
-      cleanPayload({
-        id,
-        userId: params.userId,
-        name: truncateStr(params.name, 80) || 'Trading Account',
-        currency: params.currency,
-        brokerName: truncateStr(params.brokerName, 80),
-        accountType: params.accountType,
-        initialBalance: bal,
-        currentBalance: bal,
-        isDefault: params.isDefault,
-        createdAt: tsNow(),
-        updatedAt: tsNow(),
-      })
-    );
+    await batch.commit();
     return id;
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `tradingAccounts/${id}`);
@@ -335,6 +345,13 @@ export async function recordAccountTransaction(params: {
       updatedAt: tsNow(),
     })
   );
+  queueAuditLogInBatch(batch, {
+    actorId: params.userId,
+    action: params.type === 'deposit' ? 'account_deposit' : 'account_withdrawal',
+    targetType: 'tradingAccount',
+    targetId: params.account.id,
+    details: `${params.type === 'deposit' ? 'Deposited' : 'Withdrew'} ${params.account.currency} ${amt} on "${params.account.name}" (new balance: ${newBalance})${params.notes ? ` · ${truncateStr(params.notes, 120)}` : ''}`,
+  });
 
   try {
     await batch.commit();
@@ -696,29 +713,38 @@ export async function savePsychologyAssessment(params: {
   lessonsLearned?: string;
 }) {
   const id = generateSafeId('psy');
+  const batch = writeBatch(db);
+  batch.set(
+    doc(db, 'psychologyAssessments', id),
+    cleanPayload({
+      id,
+      userId: params.userId,
+      tradeId: truncateStr(params.tradeId, 128),
+      phase: params.phase,
+      emotionalState: params.emotionalState,
+      confidenceLevel: params.confidenceLevel,
+      fomoLevel: params.fomoLevel,
+      revengeTendency: params.revengeTendency,
+      followsStrategy: params.followsStrategy,
+      riskCalculated: params.riskCalculated,
+      planFollowed: params.planFollowed,
+      stopLossRespected: params.stopLossRespected,
+      closedEmotionally: params.closedEmotionally,
+      overtradingOccurred: params.overtradingOccurred,
+      notes: truncateStr(params.notes, 1500),
+      lessonsLearned: truncateStr(params.lessonsLearned, 1500),
+      createdAt: tsNow(),
+    })
+  );
+  queueAuditLogInBatch(batch, {
+    actorId: params.userId,
+    action: 'psychology_checkin_logged',
+    targetType: 'psychology',
+    targetId: id,
+    details: `Logged ${params.phase.replace('_', ' ')} check-in (${params.emotionalState}, confidence ${params.confidenceLevel}/10, FOMO ${params.fomoLevel}/10)`,
+  });
   try {
-    await setDoc(
-      doc(db, 'psychologyAssessments', id),
-      cleanPayload({
-        id,
-        userId: params.userId,
-        tradeId: truncateStr(params.tradeId, 128),
-        phase: params.phase,
-        emotionalState: params.emotionalState,
-        confidenceLevel: params.confidenceLevel,
-        fomoLevel: params.fomoLevel,
-        revengeTendency: params.revengeTendency,
-        followsStrategy: params.followsStrategy,
-        riskCalculated: params.riskCalculated,
-        planFollowed: params.planFollowed,
-        stopLossRespected: params.stopLossRespected,
-        closedEmotionally: params.closedEmotionally,
-        overtradingOccurred: params.overtradingOccurred,
-        notes: truncateStr(params.notes, 1500),
-        lessonsLearned: truncateStr(params.lessonsLearned, 1500),
-        createdAt: tsNow(),
-      })
-    );
+    await batch.commit();
     return id;
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `psychologyAssessments/${id}`);
@@ -726,8 +752,19 @@ export async function savePsychologyAssessment(params: {
 }
 
 export async function acknowledgeViolation(violationId: string) {
+  const batch = writeBatch(db);
+  batch.update(doc(db, 'riskViolations', violationId), { acknowledged: true });
+  if (auth.currentUser?.uid) {
+    queueAuditLogInBatch(batch, {
+      actorId: auth.currentUser.uid,
+      action: 'risk_violation_acknowledged',
+      targetType: 'riskViolation',
+      targetId: violationId,
+      details: 'Acknowledged risk rule violation alert',
+    });
+  }
   try {
-    await updateDoc(doc(db, 'riskViolations', violationId), { acknowledged: true });
+    await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `riskViolations/${violationId}`);
   }
@@ -749,31 +786,40 @@ export async function enrollInChallengeCycle(params: {
   metrics: ReturnType<typeof computePortfolioMetrics>;
 }) {
   const id = `${params.cycle.id}_${params.userId}`.slice(0, 120);
+  const batch = writeBatch(db);
+  batch.set(
+    doc(db, 'challengeParticipants', id),
+    cleanPayload({
+      id,
+      cycleId: params.cycle.id,
+      userId: params.userId,
+      studentName: truncateStr(params.studentName, 120) || 'Student',
+      accountId: params.account.id,
+      openingBalance: params.account.currentBalance,
+      currentBalance: params.account.currentBalance,
+      netPnl: 0,
+      growthPercent: 0,
+      tradesCount: 0,
+      winsCount: 0,
+      maxDrawdownPercent: 0,
+      riskScore: params.metrics.scores.riskManagement,
+      disciplineScore: params.metrics.scores.discipline,
+      consistencyScore: params.metrics.scores.consistency,
+      overallScore: params.metrics.scores.overall,
+      status: 'active',
+      joinedAt: tsNow(),
+      updatedAt: tsNow(),
+    })
+  );
+  queueAuditLogInBatch(batch, {
+    actorId: params.userId,
+    action: 'challenge_enrolled',
+    targetType: 'challengeCycle',
+    targetId: params.cycle.id,
+    details: `Enrolled in challenge "${params.cycle.title}" with account "${params.account.name}"`,
+  });
   try {
-    await setDoc(
-      doc(db, 'challengeParticipants', id),
-      cleanPayload({
-        id,
-        cycleId: params.cycle.id,
-        userId: params.userId,
-        studentName: truncateStr(params.studentName, 120) || 'Student',
-        accountId: params.account.id,
-        openingBalance: params.account.currentBalance,
-        currentBalance: params.account.currentBalance,
-        netPnl: 0,
-        growthPercent: 0,
-        tradesCount: 0,
-        winsCount: 0,
-        maxDrawdownPercent: 0,
-        riskScore: params.metrics.scores.riskManagement,
-        disciplineScore: params.metrics.scores.discipline,
-        consistencyScore: params.metrics.scores.consistency,
-        overallScore: params.metrics.scores.overall,
-        status: 'active',
-        joinedAt: tsNow(),
-        updatedAt: tsNow(),
-      })
-    );
+    await batch.commit();
     return id;
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `challengeParticipants/${id}`);
@@ -817,22 +863,31 @@ export async function submitAssignmentOrQuiz(params: {
   quizScore?: number;
 }) {
   const id = generateSafeId('sub');
+  const batch = writeBatch(db);
+  batch.set(
+    doc(db, 'assignments', id),
+    cleanPayload({
+      id,
+      materialId: params.material.id,
+      materialTitle: truncateStr(params.material.title, 140) || 'Exercise',
+      userId: params.userId,
+      studentName: truncateStr(params.studentName, 120) || 'Student',
+      responseText: truncateStr(params.responseText, 4000),
+      quizScore: params.quizScore,
+      status: 'submitted',
+      createdAt: tsNow(),
+      updatedAt: tsNow(),
+    })
+  );
+  queueAuditLogInBatch(batch, {
+    actorId: params.userId,
+    action: 'assignment_submitted',
+    targetType: 'assignment',
+    targetId: id,
+    details: `Submitted ${params.material.type} "${params.material.title}"${params.quizScore !== undefined ? ` (score: ${params.quizScore}%)` : ''}`,
+  });
   try {
-    await setDoc(
-      doc(db, 'assignments', id),
-      cleanPayload({
-        id,
-        materialId: params.material.id,
-        materialTitle: truncateStr(params.material.title, 140) || 'Exercise',
-        userId: params.userId,
-        studentName: truncateStr(params.studentName, 120) || 'Student',
-        responseText: truncateStr(params.responseText, 4000),
-        quizScore: params.quizScore,
-        status: 'submitted',
-        createdAt: tsNow(),
-        updatedAt: tsNow(),
-      })
-    );
+    await batch.commit();
     return id;
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `assignments/${id}`);
@@ -1118,6 +1173,13 @@ export async function adminSaveLearningMaterial(params: {
         updatedAt: tsNow(),
       })
     );
+    await logAuditEvent({
+      actorId: params.actorId,
+      action: 'learning_material_published',
+      targetType: 'learningMaterial',
+      targetId: id,
+      details: `${params.existing ? 'Updated' : 'Published'} ${params.type} "${params.title}" (${params.category})`,
+    });
     return id;
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, `learningMaterials/${id}`);
@@ -1278,20 +1340,31 @@ export async function adminSendNotification(params: {
   linkTab?: string;
 }) {
   const id = generateSafeId('notif');
+  const batch = writeBatch(db);
+  batch.set(
+    doc(db, 'notifications', id),
+    cleanPayload({
+      id,
+      recipientId: params.recipientId,
+      type: params.type,
+      title: truncateStr(params.title, 140) || 'Update',
+      message: truncateStr(params.message, 600) || '',
+      linkTab: truncateStr(params.linkTab, 60),
+      read: false,
+      createdAt: tsNow(),
+    })
+  );
+  if (auth.currentUser?.uid) {
+    queueAuditLogInBatch(batch, {
+      actorId: auth.currentUser.uid,
+      action: 'mentor_notification_sent',
+      targetType: 'student',
+      targetId: params.recipientId,
+      details: `Sent ${params.type} message: "${truncateStr(params.title, 80) || 'Update'}"`,
+    });
+  }
   try {
-    await setDoc(
-      doc(db, 'notifications', id),
-      cleanPayload({
-        id,
-        recipientId: params.recipientId,
-        type: params.type,
-        title: truncateStr(params.title, 140) || 'Update',
-        message: truncateStr(params.message, 600) || '',
-        linkTab: truncateStr(params.linkTab, 60),
-        read: false,
-        createdAt: tsNow(),
-      })
-    );
+    await batch.commit();
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `notifications/${id}`);
   }

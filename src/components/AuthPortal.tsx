@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
@@ -35,13 +35,34 @@ type AuthMode = 'signin' | 'register' | 'reset' | 'admin';
 
 const POPULAR_INSTRUMENTS = Object.keys(INSTRUMENT_SPECS);
 
+function isPrivateAdminRoute(): boolean {
+  if (typeof window === 'undefined') return false;
+  const hash = window.location.hash.toLowerCase();
+  const params = new URLSearchParams(window.location.search);
+  return hash === '#admin' || params.get('portal') === 'admin';
+}
+
 export const AuthPortal: React.FC = () => {
   const { firebaseUser, needsOnboarding, theme, toggleTheme } = useMentorship();
-  const [mode, setMode] = useState<AuthMode>('signin');
+  const [mode, setMode] = useState<AuthMode>(() =>
+    isPrivateAdminRoute() ? 'admin' : 'signin'
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providerHelpUrl, setProviderHelpUrl] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onHashChange = () => {
+      if (isPrivateAdminRoute()) {
+        setMode('admin');
+        setError(null);
+        setNotice(null);
+      }
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   // Sign In / Register credentials
   const [email, setEmail] = useState('');
@@ -588,85 +609,85 @@ export const AuthPortal: React.FC = () => {
 
         <div className="lg:col-span-6">
           <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-xl p-6 md:p-7 space-y-5">
-            <div className="grid grid-cols-4 gap-1 p-1 bg-slate-100 dark:bg-[#0B111E] rounded-lg">
-              <button
-                type="button"
-                onClick={() => {
-                  setMode('signin');
-                  setError(null);
-                  setProviderHelpUrl(null);
-                  setNotice(null);
-                }}
-                className={`py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  mode === 'signin'
-                    ? 'bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-600 dark:text-slate-400'
-                }`}
-              >
-                Sign In
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMode('register');
-                  setError(null);
-                  setProviderHelpUrl(null);
-                  setNotice(null);
-                }}
-                className={`py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  mode === 'register'
-                    ? 'bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-600 dark:text-slate-400'
-                }`}
-              >
-                Register
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMode('reset');
-                  setError(null);
-                  setProviderHelpUrl(null);
-                  setNotice(null);
-                }}
-                className={`py-1.5 text-xs font-medium rounded-md transition-colors ${
-                  mode === 'reset'
-                    ? 'bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-600 dark:text-slate-400'
-                }`}
-              >
-                Reset
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMode('admin');
-                  setError(null);
-                  setProviderHelpUrl(null);
-                  setNotice(null);
-                }}
-                className={`py-1.5 text-xs font-medium rounded-md transition-colors flex items-center justify-center gap-1 ${
-                  mode === 'admin'
-                    ? 'bg-blue-600 text-white shadow-sm'
-                    : 'text-slate-600 dark:text-slate-400'
-                }`}
-              >
-                <Lock className="w-3 h-3" />
-                Admin
-              </button>
-            </div>
-
-            {mode === 'admin' && (
-              <div className="p-3 rounded-lg bg-blue-600/10 border border-blue-500/20 text-xs text-slate-700 dark:text-slate-200 flex items-start gap-2.5">
-                <Lock className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-semibold text-slate-900 dark:text-white">
-                    Administrator & Mentor Portal Login
+            {mode !== 'admin' ? (
+              <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 dark:bg-[#0B111E] rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('signin');
+                    setError(null);
+                    setProviderHelpUrl(null);
+                    setNotice(null);
+                  }}
+                  className={`py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    mode === 'signin'
+                      ? 'bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  Sign In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('register');
+                    setError(null);
+                    setProviderHelpUrl(null);
+                    setNotice(null);
+                  }}
+                  className={`py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    mode === 'register'
+                      ? 'bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  Register
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('reset');
+                    setError(null);
+                    setProviderHelpUrl(null);
+                    setNotice(null);
+                  }}
+                  className={`py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    mode === 'reset'
+                      ? 'bg-white dark:bg-[#1E293B] text-slate-900 dark:text-white shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400'
+                  }`}
+                >
+                  Reset
+                </button>
+              </div>
+            ) : (
+              <div className="p-3 rounded-lg bg-blue-600/10 border border-blue-500/20 text-xs text-slate-700 dark:text-slate-200 flex items-start justify-between gap-2.5">
+                <div className="flex items-start gap-2.5">
+                  <Lock className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold text-slate-900 dark:text-white">
+                      Administrator & Mentor Portal Login
+                    </div>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                      Restricted access. Sign in with your verified administrator credentials to enter the Mentor Command Console.
+                    </p>
                   </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    Restricted access. Sign in with your verified administrator credentials to enter the Mentor Command Console.
-                  </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('signin');
+                    setError(null);
+                    setProviderHelpUrl(null);
+                    setNotice(null);
+                    if (typeof window !== 'undefined') {
+                      window.history.replaceState(null, '', window.location.pathname);
+                    }
+                  }}
+                  className="text-[11px] text-blue-500 hover:underline shrink-0"
+                >
+                  Standard Login
+                </button>
               </div>
             )}
 

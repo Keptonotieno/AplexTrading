@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { useMentorship } from '../../context/MentorshipContext';
+import { ACTIVITY_CATEGORY_LABELS, buildAllUserActivities } from '../../lib/activityFeed';
 import { formatFirestoreDate } from '../../lib/firestore-helpers';
 import {
   computePortfolioMetrics,
@@ -37,11 +38,20 @@ export const AdminOverview: React.FC<{ onNavigate: (tab: AdminTab) => void }> = 
 }) => {
   const {
     adminProfiles,
+    adminUsers,
+    adminAuditLogs,
     adminAllTrades,
+    adminAllTradeEditLogs,
+    adminAllScreenshots,
+    adminAllAccounts,
+    adminAllTransactions,
+    adminAllPsychology,
     adminAllTradeReviews,
     adminAllViolations,
-    challengeCycles,
+    adminAllParticipants,
     adminAllAssignments,
+    adminAllMentorReviews,
+    challengeCycles,
   } = useMentorship();
 
   const reviewedTradeIds = useMemo(
@@ -62,6 +72,44 @@ export const AdminOverview: React.FC<{ onNavigate: (tab: AdminTab) => void }> = 
   const pendingAssignments = useMemo(
     () => adminAllAssignments.filter((a) => a.status === 'submitted'),
     [adminAllAssignments]
+  );
+
+  const recentAllActivities = useMemo(
+    () =>
+      buildAllUserActivities({
+        profiles: adminProfiles,
+        users: adminUsers,
+        auditLogs: adminAuditLogs,
+        trades: adminAllTrades,
+        tradeEditLogs: adminAllTradeEditLogs,
+        screenshots: adminAllScreenshots,
+        accounts: adminAllAccounts,
+        transactions: adminAllTransactions,
+        psychology: adminAllPsychology,
+        violations: adminAllViolations,
+        participants: adminAllParticipants,
+        assignments: adminAllAssignments,
+        tradeReviews: adminAllTradeReviews,
+        mentorReviews: adminAllMentorReviews,
+        cycles: challengeCycles,
+      }).slice(0, 10),
+    [
+      adminProfiles,
+      adminUsers,
+      adminAuditLogs,
+      adminAllTrades,
+      adminAllTradeEditLogs,
+      adminAllScreenshots,
+      adminAllAccounts,
+      adminAllTransactions,
+      adminAllPsychology,
+      adminAllViolations,
+      adminAllParticipants,
+      adminAllAssignments,
+      adminAllTradeReviews,
+      adminAllMentorReviews,
+      challengeCycles,
+    ]
   );
 
   const activeCycle = challengeCycles.find((c) => c.status === 'active');
@@ -225,6 +273,60 @@ export const AdminOverview: React.FC<{ onNavigate: (tab: AdminTab) => void }> = 
           )}
         </div>
       </div>
+
+      {/* Unified Live Stream of All Users' Activities */}
+      <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800/80 rounded-xl p-5 md:p-6 space-y-4">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
+              Recent Activity Across All Users
+            </h2>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+              Live feed of trades, chart uploads, deposits/withdrawals, psychology check-ins, and profile updates
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigate('activity')}
+            className="text-xs text-blue-500 hover:underline whitespace-nowrap"
+          >
+            View All User Activities →
+          </button>
+        </div>
+
+        {recentAllActivities.length === 0 ? (
+          <p className="text-xs text-slate-500 py-6 text-center">
+            No user activities have been recorded yet.
+          </p>
+        ) : (
+          <div className="divide-y divide-slate-100 dark:divide-slate-800/60 text-xs">
+            {recentAllActivities.map((item) => (
+              <div
+                key={item.id}
+                className="py-2.5 flex flex-wrap items-center justify-between gap-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-slate-900 dark:text-white">
+                      {item.userName}
+                    </span>
+                    <span className="text-blue-500 font-medium">{item.actionLabel}</span>
+                    <span className="text-[11px] text-slate-400">
+                      · {ACTIVITY_CATEGORY_LABELS[item.category]}
+                    </span>
+                  </div>
+                  <p className="text-slate-600 dark:text-slate-300 truncate mt-0.5">
+                    {item.summary}
+                  </p>
+                </div>
+                <span className="font-mono tabular-nums text-slate-400 whitespace-nowrap">
+                  {formatFirestoreDate(item.timestamp)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -234,11 +336,19 @@ export const AdminStudentsView: React.FC = () => {
     firebaseUser,
     adminUsers,
     adminProfiles,
+    adminAuditLogs,
     adminAllTrades,
+    adminAllTradeEditLogs,
+    adminAllScreenshots,
     adminAllAccounts,
     adminAllTransactions,
     adminAllViolations,
     adminAllPsychology,
+    adminAllParticipants,
+    adminAllAssignments,
+    adminAllTradeReviews,
+    adminAllMentorReviews,
+    challengeCycles,
     systemSettings,
   } = useMentorship();
 
@@ -285,6 +395,46 @@ export const AdminStudentsView: React.FC = () => {
   };
 
   const selectedUserRecord = adminUsers.find((u) => u.uid === selectedUid) || null;
+
+  const selectedStudentActivities = useMemo(() => {
+    if (!selectedUid) return [];
+    return buildAllUserActivities({
+      profiles: adminProfiles,
+      users: adminUsers,
+      auditLogs: adminAuditLogs,
+      trades: adminAllTrades,
+      tradeEditLogs: adminAllTradeEditLogs,
+      screenshots: adminAllScreenshots,
+      accounts: adminAllAccounts,
+      transactions: adminAllTransactions,
+      psychology: adminAllPsychology,
+      violations: adminAllViolations,
+      participants: adminAllParticipants,
+      assignments: adminAllAssignments,
+      tradeReviews: adminAllTradeReviews,
+      mentorReviews: adminAllMentorReviews,
+      cycles: challengeCycles,
+    })
+      .filter((item) => item.userId === selectedUid)
+      .slice(0, 12);
+  }, [
+    selectedUid,
+    adminProfiles,
+    adminUsers,
+    adminAuditLogs,
+    adminAllTrades,
+    adminAllTradeEditLogs,
+    adminAllScreenshots,
+    adminAllAccounts,
+    adminAllTransactions,
+    adminAllPsychology,
+    adminAllViolations,
+    adminAllParticipants,
+    adminAllAssignments,
+    adminAllTradeReviews,
+    adminAllMentorReviews,
+    challengeCycles,
+  ]);
 
   const handleStatusChange = async (uid: string, status: 'active' | 'suspended') => {
     if (!firebaseUser) return;
@@ -563,6 +713,34 @@ export const AdminStudentsView: React.FC = () => {
                   </button>
                 </div>
               </form>
+
+              <div className="space-y-2.5 pt-3 border-t border-slate-200 dark:border-slate-800">
+                <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  Recent User Activity ({selectedStudentActivities.length})
+                </div>
+                {selectedStudentActivities.length === 0 ? (
+                  <p className="text-xs text-slate-500">No recorded activity for this user yet.</p>
+                ) : (
+                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                    {selectedStudentActivities.map((act) => (
+                      <div
+                        key={act.id}
+                        className="p-2.5 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200/80 dark:border-slate-800 text-xs space-y-0.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-blue-500">{act.actionLabel}</span>
+                          <span className="font-mono text-[11px] text-slate-400">
+                            {formatFirestoreDate(act.timestamp)}
+                          </span>
+                        </div>
+                        <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                          {act.summary}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>
