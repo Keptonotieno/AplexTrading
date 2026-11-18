@@ -165,6 +165,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
         takeProfit: takeProfit ? Number(takeProfit) : undefined,
         lotSizeOverride: Number(lotSize) || undefined,
         accountType: selectedAccount?.accountType,
+        customContractScale: selectedAccount?.customContractScale,
       }),
     [
       instrument,
@@ -176,6 +177,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
       takeProfit,
       lotSize,
       selectedAccount?.accountType,
+      selectedAccount?.customContractScale,
     ]
   );
 
@@ -194,6 +196,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
         swap: Number(swap) || 0,
         grossPnlOverride: grossPnlOverride !== '' ? Number(grossPnlOverride) : undefined,
         accountType: selectedAccount?.accountType,
+        customContractScale: selectedAccount?.customContractScale,
       }),
     [
       instrument,
@@ -208,6 +211,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
       swap,
       grossPnlOverride,
       selectedAccount?.accountType,
+      selectedAccount?.customContractScale,
     ]
   );
 
@@ -364,7 +368,7 @@ export const TradeModal: React.FC<Props> = ({ open, onClose, existingTrade }) =>
               >
                 {tradingAccounts.map((acc) => (
                   <option key={acc.id} value={acc.id}>
-                    {acc.name} · {formatAccountTypeLabel(acc.accountType)} ({formatPlainCurrency(acc.currentBalance, acc.currency)})
+                    {acc.name} · {formatAccountTypeLabel(acc.accountType, acc.customTypeLabel)} ({formatPlainCurrency(acc.currentBalance, acc.currency)})
                   </option>
                 ))}
               </select>

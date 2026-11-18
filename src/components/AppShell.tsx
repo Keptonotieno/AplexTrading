@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { useMentorship } from '../context/MentorshipContext';
 import { formatAccountTypeLabel, formatPlainCurrency } from '../lib/forexCalculations';
+import { BrandMark } from './BrandMark';
 
 export type StudentTab =
   | 'dashboard'
@@ -267,9 +268,7 @@ export const AppShell: React.FC<AppShellProps> = ({
             }}
             className="flex items-center gap-2.5 text-left"
           >
-            <div className="w-9 h-9 rounded-lg bg-blue-600/15 text-blue-500 flex items-center justify-center shrink-0">
-              <BarChart2 className="w-5 h-5" />
-            </div>
+            <BrandMark size="md" />
             <div>
               <div className="text-sm font-bold tracking-tight text-slate-900 dark:text-white leading-tight whitespace-nowrap">
                 Forex Mentorship
@@ -480,7 +479,7 @@ export const AppShell: React.FC<AppShellProps> = ({
                   <option value="all">All Accounts ({tradingAccounts.length})</option>
                   {tradingAccounts.map((acc) => (
                     <option key={acc.id} value={acc.id}>
-                      {acc.name} · {formatAccountTypeLabel(acc.accountType)} ({formatPlainCurrency(acc.currentBalance, acc.currency)})
+                      {acc.name} · {formatAccountTypeLabel(acc.accountType, acc.customTypeLabel)} ({formatPlainCurrency(acc.currentBalance, acc.currency)})
                     </option>
                   ))}
                 </select>

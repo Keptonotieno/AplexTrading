@@ -65,7 +65,9 @@ export interface TradingAccount {
   name: string;
   currency: 'USD' | 'EUR' | 'GBP' | 'JPY' | 'AUD' | 'CAD' | 'CHF';
   brokerName?: string;
-  accountType: 'cent' | 'standard' | 'demo' | 'live' | 'prop_challenge' | 'funded';
+  accountType: 'cent' | 'standard' | 'demo' | 'live' | 'prop_challenge' | 'funded' | 'custom';
+  customTypeLabel?: string;
+  customContractScale?: number;
   initialBalance: number;
   currentBalance: number;
   isDefault: boolean;

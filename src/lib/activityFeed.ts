@@ -1,5 +1,5 @@
 import { toIsoString } from './firestore-helpers';
-import { formatCurrency, formatPlainCurrency } from './forexCalculations';
+import { formatAccountTypeLabel, formatCurrency, formatPlainCurrency } from './forexCalculations';
 import type {
   AccountTransaction,
   AssignmentSubmission,
@@ -273,7 +273,7 @@ export function buildAllUserActivities(params: {
         userName: resolveUserName(acc.userId),
         category: 'capital',
         actionLabel: 'Account Created',
-        summary: `Created ${acc.accountType.replace(/_/g, ' ')} account "${acc.name}" (${formatPlainCurrency(acc.initialBalance, acc.currency)})`,
+        summary: `Created ${formatAccountTypeLabel(acc.accountType, acc.customTypeLabel)} account "${acc.name}" (${formatPlainCurrency(acc.initialBalance, acc.currency)})`,
         targetId: acc.id,
         source: 'record',
       });

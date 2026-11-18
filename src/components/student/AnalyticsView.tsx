@@ -9,6 +9,7 @@ import {
   ChevronRight,
   GitCompare,
   Plus,
+  SlidersHorizontal,
   Wallet,
 } from 'lucide-react';
 import {
@@ -35,7 +36,11 @@ import {
   getMinimumInitialBalance,
   type PeriodSummary,
 } from '../../lib/forexCalculations';
-import { createTradingAccount, recordAccountTransaction } from '../../services/mentorshipService';
+import {
+  createTradingAccount,
+  recordAccountTransaction,
+  updateTradingAccount,
+} from '../../services/mentorshipService';
 import type { TradingAccount } from '../../types/domain';
 
 interface AiPatternReport {
@@ -77,11 +82,16 @@ export const AnalyticsView: React.FC = () => {
   const [tab, setTab] = useState<'performance' | 'accounts' | 'calendar' | 'ai'>('performance');
   const [comparisonMode, setComparisonMode] = useState<'30d' | 'month'>('30d');
   const [showNewAccount, setShowNewAccount] = useState(false);
+  const [editingAccount, setEditingAccount] = useState<TradingAccount | null>(null);
   const [accName, setAccName] = useState('');
   const [accType, setAccType] = useState<TradingAccount['accountType']>('standard');
+  const [accCustomLabel, setAccCustomLabel] = useState('');
+  const [accScalePreset, setAccScalePreset] = useState<'1' | '0.1' | '0.01' | 'custom'>('1');
+  const [accCustomScale, setAccCustomScale] = useState('1');
   const [accCurrency, setAccCurrency] = useState<TradingAccount['currency']>('USD');
   const [accBalance, setAccBalance] = useState('');
   const [accBroker, setAccBroker] = useState('');
+  const [accIsDefault, setAccIsDefault] = useState(false);
   const [accError, setAccError] = useState<string | null>(null);
 
   const [txAccountId, setTxAccountId] = useState(activeAccount?.id || tradingAccounts[0]?.id || '');
@@ -237,35 +247,110 @@ export const AnalyticsView: React.FC = () => {
     }
   };
 
-  const handleCreateAccount = async (e: React.FormEvent) => {
+  const openNewAccountForm = () => {
+    setEditingAccount(null);
+    setAccName('');
+    setAccType('standard');
+    setAccCustomLabel('');
+    setAccScalePreset('1');
+    setAccCustomScale('1');
+    setAccCurrency('USD');
+    setAccBalance('');
+    setAccBroker('');
+    setAccIsDefault(tradingAccounts.length === 0);
+    setAccError(null);
+    setShowNewAccount((v) => !v || Boolean(editingAccount));
+  };
+
+  const openEditAccountForm = (acc: TradingAccount) => {
+    setEditingAccount(acc);
+    setAccName(acc.name);
+    setAccType(acc.accountType);
+    setAccCustomLabel(acc.customTypeLabel || '');
+    const scaleStr = acc.customContractScale !== undefined ? String(acc.customContractScale) : '1';
+    if (scaleStr === '1' || scaleStr === '0.1' || scaleStr === '0.01') {
+      setAccScalePreset(scaleStr);
+      setAccCustomScale(scaleStr);
+    } else {
+      setAccScalePreset('custom');
+      setAccCustomScale(scaleStr);
+    }
+    setAccCurrency(acc.currency);
+    setAccBalance(String(acc.initialBalance));
+    setAccBroker(acc.brokerName || '');
+    setAccIsDefault(acc.isDefault);
+    setAccError(null);
+    setShowNewAccount(true);
+  };
+
+  const handleSaveAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!firebaseUser || !accName.trim()) return;
-    const minRequired = getMinimumInitialBalance(accType);
-    const parsedBal = Number(accBalance);
-    if (!Number.isFinite(parsedBal) || parsedBal < minRequired) {
-      setAccError(
-        `${formatAccountTypeLabel(accType)} accounts require a minimum starting capital of $${minRequired}.00.`
-      );
+
+    const resolvedScale =
+      accType === 'custom'
+        ? accScalePreset === 'custom'
+          ? Number(accCustomScale)
+          : Number(accScalePreset)
+        : undefined;
+
+    if (
+      accType === 'custom' &&
+      (!Number.isFinite(resolvedScale) || (resolvedScale ?? 0) <= 0 || (resolvedScale ?? 0) > 100)
+    ) {
+      setAccError('Custom contract scale must be a positive multiplier between 0.001 and 100.');
       return;
     }
+
     setBusy(true);
     setAccError(null);
     try {
-      await createTradingAccount({
-        userId: firebaseUser.uid,
-        name: accName.trim(),
-        currency: accCurrency,
-        brokerName: accBroker.trim() || undefined,
-        accountType: accType,
-        initialBalance: parsedBal,
-        isDefault: tradingAccounts.length === 0,
-      });
+      if (editingAccount) {
+        await updateTradingAccount({
+          userId: firebaseUser.uid,
+          account: editingAccount,
+          name: accName.trim(),
+          currency: accCurrency,
+          brokerName: accBroker.trim() || undefined,
+          accountType: accType,
+          customTypeLabel: accType === 'custom' ? accCustomLabel.trim() || undefined : undefined,
+          customContractScale: resolvedScale,
+          isDefault: accIsDefault,
+          existingAccounts: tradingAccounts,
+        });
+      } else {
+        const minRequired = getMinimumInitialBalance(accType);
+        const parsedBal = Number(accBalance);
+        if (!Number.isFinite(parsedBal) || parsedBal < minRequired) {
+          setAccError(
+            `${formatAccountTypeLabel(accType, accCustomLabel)} accounts require a minimum starting capital of $${minRequired}.00.`
+          );
+          setBusy(false);
+          return;
+        }
+        await createTradingAccount({
+          userId: firebaseUser.uid,
+          name: accName.trim(),
+          currency: accCurrency,
+          brokerName: accBroker.trim() || undefined,
+          accountType: accType,
+          customTypeLabel: accType === 'custom' ? accCustomLabel.trim() || undefined : undefined,
+          customContractScale: resolvedScale,
+          initialBalance: parsedBal,
+          isDefault: accIsDefault || tradingAccounts.length === 0,
+          existingAccounts: tradingAccounts,
+        });
+      }
+      setEditingAccount(null);
       setAccName('');
+      setAccCustomLabel('');
+      setAccScalePreset('1');
+      setAccCustomScale('1');
       setAccBalance('');
       setAccBroker('');
       setShowNewAccount(false);
     } catch (err: unknown) {
-      setAccError(err instanceof Error ? err.message : 'Unable to create trading account.');
+      setAccError(err instanceof Error ? err.message : 'Unable to save trading account.');
     } finally {
       setBusy(false);
     }
@@ -797,7 +882,7 @@ export const AnalyticsView: React.FC = () => {
                 </h2>
                 <button
                   type="button"
-                  onClick={() => setShowNewAccount((v) => !v)}
+                  onClick={openNewAccountForm}
                   className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -807,9 +892,25 @@ export const AnalyticsView: React.FC = () => {
 
               {showNewAccount && (
                 <form
-                  onSubmit={handleCreateAccount}
+                  onSubmit={handleSaveAccount}
                   className="p-4 rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 space-y-3"
                 >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-900 dark:text-white">
+                      {editingAccount ? `Customize "${editingAccount.name}"` : 'New Trading Account'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowNewAccount(false);
+                        setEditingAccount(null);
+                        setAccError(null);
+                      }}
+                      className="text-[11px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                   {accError && (
                     <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-500">
                       {accError}
@@ -821,7 +922,7 @@ export const AnalyticsView: React.FC = () => {
                       required
                       value={accName}
                       onChange={(e) => setAccName(e.target.value)}
-                      placeholder="Account label (e.g. Cent Growth or Prop Phase 1)"
+                      placeholder="Account label (e.g. Raw ECN or Cent Growth)"
                       className="col-span-2 px-3 py-2 text-xs rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
                     />
                     <select
@@ -838,6 +939,7 @@ export const AnalyticsView: React.FC = () => {
                       <option value="live">Live Standard (Min $50)</option>
                       <option value="prop_challenge">Prop Challenge (Min $50)</option>
                       <option value="funded">Funded (Min $50)</option>
+                      <option value="custom">Custom Account (Min $1)</option>
                     </select>
                     <select
                       value={accCurrency}
@@ -847,25 +949,80 @@ export const AnalyticsView: React.FC = () => {
                       <option value="USD">USD</option>
                       <option value="EUR">EUR</option>
                       <option value="GBP">GBP</option>
+                      <option value="JPY">JPY</option>
+                      <option value="AUD">AUD</option>
+                      <option value="CAD">CAD</option>
+                      <option value="CHF">CHF</option>
                     </select>
-                    <input
-                      type="number"
-                      min={getMinimumInitialBalance(accType)}
-                      step="0.01"
-                      required
-                      value={accBalance}
-                      onChange={(e) => setAccBalance(e.target.value)}
-                      placeholder={`Starting balance (Min $${getMinimumInitialBalance(accType)})`}
-                      className="px-3 py-2 text-xs font-mono rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
-                    />
+                    {accType === 'custom' && (
+                      <>
+                        <input
+                          type="text"
+                          maxLength={60}
+                          value={accCustomLabel}
+                          onChange={(e) => setAccCustomLabel(e.target.value)}
+                          placeholder="Custom tier label (e.g. Raw ECN, Mini 10k)"
+                          className="col-span-2 px-3 py-2 text-xs rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
+                        />
+                        <select
+                          value={accScalePreset}
+                          onChange={(e) =>
+                            setAccScalePreset(e.target.value as '1' | '0.1' | '0.01' | 'custom')
+                          }
+                          className={`${
+                            accScalePreset === 'custom' ? 'col-span-1' : 'col-span-2'
+                          } px-3 py-2 text-xs rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800`}
+                        >
+                          <option value="1">Contract Scale: Standard (1x · 100k/lot)</option>
+                          <option value="0.1">Contract Scale: Mini (0.1x · 10k/lot)</option>
+                          <option value="0.01">Contract Scale: Cent / Micro (0.01x · 1k/lot)</option>
+                          <option value="custom">Custom Contract Scale Multiplier</option>
+                        </select>
+                        {accScalePreset === 'custom' && (
+                          <input
+                            type="number"
+                            step="0.001"
+                            min="0.001"
+                            max="100"
+                            required
+                            value={accCustomScale}
+                            onChange={(e) => setAccCustomScale(e.target.value)}
+                            placeholder="Scale multiplier (e.g. 0.5)"
+                            className="px-3 py-2 text-xs font-mono rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
+                          />
+                        )}
+                      </>
+                    )}
+                    {!editingAccount && (
+                      <input
+                        type="number"
+                        min={getMinimumInitialBalance(accType)}
+                        step="0.01"
+                        required
+                        value={accBalance}
+                        onChange={(e) => setAccBalance(e.target.value)}
+                        placeholder={`Starting balance (Min $${getMinimumInitialBalance(accType)})`}
+                        className="px-3 py-2 text-xs font-mono rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
+                      />
+                    )}
                     <input
                       type="text"
                       value={accBroker}
                       onChange={(e) => setAccBroker(e.target.value)}
                       placeholder="Broker name (descriptive)"
-                      className="px-3 py-2 text-xs rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
+                      className={`${
+                        editingAccount ? 'col-span-2' : 'col-span-1'
+                      } px-3 py-2 text-xs rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800`}
                     />
                   </div>
+                  <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={accIsDefault}
+                      onChange={(e) => setAccIsDefault(e.target.checked)}
+                    />
+                    Set as default active trading account
+                  </label>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
                     {ACCOUNT_TYPE_SPECS[accType].description}
                   </p>
@@ -874,7 +1031,7 @@ export const AnalyticsView: React.FC = () => {
                     disabled={busy}
                     className="w-full py-2 text-xs font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60"
                   >
-                    Create Account
+                    {editingAccount ? 'Save Account Customization' : 'Create Account'}
                   </button>
                 </form>
               )}
@@ -883,24 +1040,49 @@ export const AnalyticsView: React.FC = () => {
                 {tradingAccounts.map((acc) => (
                   <div
                     key={acc.id}
-                    className="py-3 flex items-center justify-between"
+                    className="py-3 flex items-center justify-between gap-3"
                   >
-                    <div>
-                      <div className="text-sm font-semibold text-slate-900 dark:text-white">
-                        {acc.name}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                          {acc.name}
+                        </span>
+                        {acc.isDefault && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 border border-blue-500/20">
+                            Default
+                          </span>
+                        )}
                       </div>
                       <div className="text-xs text-slate-500">
-                        {formatAccountTypeLabel(acc.accountType)} · {acc.currency}
+                        {formatAccountTypeLabel(acc.accountType, acc.customTypeLabel)}
+                        {acc.accountType === 'custom' &&
+                        acc.customContractScale !== undefined &&
+                        acc.customContractScale !== 1
+                          ? ` (${acc.customContractScale}x)`
+                          : ''}
+                        {' · '}
+                        {acc.currency}
                         {acc.brokerName ? ` · ${acc.brokerName}` : ''}
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-sm font-bold font-mono tabular-nums text-slate-900 dark:text-white">
-                        {formatPlainCurrency(acc.currentBalance, acc.currency)}
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="text-right">
+                        <div className="text-sm font-bold font-mono tabular-nums text-slate-900 dark:text-white">
+                          {formatPlainCurrency(acc.currentBalance, acc.currency)}
+                        </div>
+                        <div className="text-[11px] font-mono text-slate-500">
+                          Init: {formatPlainCurrency(acc.initialBalance, acc.currency)}
+                        </div>
                       </div>
-                      <div className="text-[11px] font-mono text-slate-500">
-                        Init: {formatPlainCurrency(acc.initialBalance, acc.currency)}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openEditAccountForm(acc)}
+                        title="Customize account"
+                        aria-label={`Customize ${acc.name}`}
+                        className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800/70"
+                      >
+                        <SlidersHorizontal className="w-3.5 h-3.5" />
+                      </button>
                     </div>
                   </div>
                 ))}

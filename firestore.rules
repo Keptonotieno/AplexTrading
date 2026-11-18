@@ -117,13 +117,15 @@ service cloud.firestore {
 
     function isValidTradingAccount(data, accountId) {
       return data.keys().hasAll(['id', 'userId', 'name', 'currency', 'accountType', 'initialBalance', 'currentBalance', 'isDefault', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'userId', 'name', 'currency', 'brokerName', 'accountType', 'initialBalance', 'currentBalance', 'isDefault', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'userId', 'name', 'currency', 'brokerName', 'accountType', 'customTypeLabel', 'customContractScale', 'initialBalance', 'currentBalance', 'isDefault', 'createdAt', 'updatedAt'])
         && isValidId(data.id) && data.id == accountId
         && isValidId(data.userId)
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
         && data.currency in ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF']
         && isOptString(data, 'brokerName', 80)
-        && data.accountType in ['cent', 'standard', 'demo', 'live', 'prop_challenge', 'funded']
+        && data.accountType in ['cent', 'standard', 'demo', 'live', 'prop_challenge', 'funded', 'custom']
+        && isOptString(data, 'customTypeLabel', 60)
+        && (!('customContractScale' in data) || (data.customContractScale is number && data.customContractScale > 0 && data.customContractScale <= 100))
         && data.initialBalance is number && data.initialBalance >= 0
         && data.currentBalance is number
         && data.isDefault is bool
@@ -589,7 +591,8 @@ service cloud.firestore {
         && incoming().userId == request.auth.uid
         && (
           (incoming().accountType in ['cent', 'demo'] && incoming().initialBalance >= 10) ||
-          (incoming().accountType in ['standard', 'live', 'prop_challenge', 'funded'] && incoming().initialBalance >= 50)
+          (incoming().accountType in ['standard', 'live', 'prop_challenge', 'funded'] && incoming().initialBalance >= 50) ||
+          (incoming().accountType == 'custom' && incoming().initialBalance >= 1)
         )
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
@@ -603,7 +606,7 @@ service cloud.firestore {
           isAdmin() ||
           (
             existing().userId == request.auth.uid
-            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'brokerName', 'currentBalance', 'isDefault', 'updatedAt'])
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'brokerName', 'accountType', 'currency', 'customTypeLabel', 'customContractScale', 'currentBalance', 'isDefault', 'updatedAt'])
           )
         );
       allow delete: if isVerified() && isValidId(accountId) && (existing().userId == request.auth.uid || isAdmin());

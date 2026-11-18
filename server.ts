@@ -201,6 +201,11 @@ async function startServer() {
     const lotSizeOverride = body.lotSizeOverride !== undefined ? Number(body.lotSizeOverride) : undefined;
 
     const accountType = typeof body.accountType === 'string' ? body.accountType : undefined;
+    const rawScale = body.customContractScale !== undefined ? Number(body.customContractScale) : undefined;
+    const customContractScale =
+      rawScale !== undefined && Number.isFinite(rawScale) && rawScale > 0 && rawScale <= 100
+        ? rawScale
+        : undefined;
 
     if (!instrument || !Number.isFinite(accountBalance) || !Number.isFinite(riskPercent)) {
       res.status(400).json({ error: 'Invalid calculation inputs.' });
@@ -217,6 +222,7 @@ async function startServer() {
       takeProfit,
       lotSizeOverride,
       accountType: accountType as never,
+      customContractScale,
     });
     res.json(result);
   });

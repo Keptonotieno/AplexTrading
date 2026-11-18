@@ -299,17 +299,41 @@ export const ACCOUNT_TYPE_SPECS: Record<TradingAccount['accountType'], AccountTy
     contractScale: 1,
     description: 'Verified funded trading allocation. Minimum starting balance of $50.',
   },
+  custom: {
+    type: 'custom',
+    label: 'Custom Account (Min $1)',
+    shortLabel: 'Custom',
+    minInitialBalance: 1,
+    contractScale: 1,
+    description: 'Fully customizable trading account: define your own tier name, contract scale (Standard 1x, Mini 0.1x, Cent 0.01x, or custom), currency, and starting balance.',
+  },
 };
 
 export function getMinimumInitialBalance(accountType: TradingAccount['accountType']): number {
   return ACCOUNT_TYPE_SPECS[accountType]?.minInitialBalance ?? 50;
 }
 
-export function getAccountContractScale(accountType?: TradingAccount['accountType']): number {
+export function getAccountContractScale(
+  accountType?: TradingAccount['accountType'],
+  customContractScale?: number
+): number {
+  if (
+    typeof customContractScale === 'number' &&
+    Number.isFinite(customContractScale) &&
+    customContractScale > 0
+  ) {
+    return customContractScale;
+  }
   return accountType ? ACCOUNT_TYPE_SPECS[accountType]?.contractScale ?? 1 : 1;
 }
 
-export function formatAccountTypeLabel(accountType: TradingAccount['accountType']): string {
+export function formatAccountTypeLabel(
+  accountType: TradingAccount['accountType'],
+  customTypeLabel?: string
+): string {
+  if (accountType === 'custom' && customTypeLabel?.trim()) {
+    return customTypeLabel.trim();
+  }
   return ACCOUNT_TYPE_SPECS[accountType]?.shortLabel ?? accountType.replace('_', ' ');
 }
 
@@ -321,12 +345,13 @@ export function getInstrumentSpec(symbol: string): InstrumentSpec | null {
 export function getPipValuePerLot(
   symbol: string,
   entryPrice?: number,
-  accountType?: TradingAccount['accountType']
+  accountType?: TradingAccount['accountType'],
+  customContractScale?: number
 ): number | null {
   const spec = getInstrumentSpec(symbol);
   if (!spec) return null;
 
-  const scale = getAccountContractScale(accountType);
+  const scale = getAccountContractScale(accountType, customContractScale);
 
   if (spec.quoteCurrency === 'USD') {
     return spec.contractSize * spec.pipSize * scale;
@@ -349,6 +374,7 @@ export interface PositionCalculationInput {
   takeProfit?: number;
   lotSizeOverride?: number;
   accountType?: TradingAccount['accountType'];
+  customContractScale?: number;
 }
 
 export interface PositionCalculationResult {
@@ -393,7 +419,12 @@ export function calculatePositionSizing(input: PositionCalculationInput): Positi
       incompleteReason: 'Enter positive account balance, entry price, and stop-loss price.',
       stopLossPips: null,
       takeProfitPips: null,
-      pipValuePerLot: getPipValuePerLot(input.instrument, input.entryPrice, input.accountType),
+      pipValuePerLot: getPipValuePerLot(
+        input.instrument,
+        input.entryPrice,
+        input.accountType,
+        input.customContractScale
+      ),
       plannedRiskAmount: null,
       recommendedLotSize: null,
       recommendedUnits: null,
@@ -411,7 +442,12 @@ export function calculatePositionSizing(input: PositionCalculationInput): Positi
       incompleteReason: 'For BUY positions, stop-loss must be below entry price.',
       stopLossPips: null,
       takeProfitPips: null,
-      pipValuePerLot: getPipValuePerLot(input.instrument, input.entryPrice, input.accountType),
+      pipValuePerLot: getPipValuePerLot(
+        input.instrument,
+        input.entryPrice,
+        input.accountType,
+        input.customContractScale
+      ),
       plannedRiskAmount: round2(input.accountBalance * (input.riskPercent / 100)),
       recommendedLotSize: null,
       recommendedUnits: null,
@@ -427,7 +463,12 @@ export function calculatePositionSizing(input: PositionCalculationInput): Positi
       incompleteReason: 'For SELL positions, stop-loss must be above entry price.',
       stopLossPips: null,
       takeProfitPips: null,
-      pipValuePerLot: getPipValuePerLot(input.instrument, input.entryPrice, input.accountType),
+      pipValuePerLot: getPipValuePerLot(
+        input.instrument,
+        input.entryPrice,
+        input.accountType,
+        input.customContractScale
+      ),
       plannedRiskAmount: round2(input.accountBalance * (input.riskPercent / 100)),
       recommendedLotSize: null,
       recommendedUnits: null,
@@ -438,10 +479,15 @@ export function calculatePositionSizing(input: PositionCalculationInput): Positi
     };
   }
 
-  const contractScale = getAccountContractScale(input.accountType);
+  const contractScale = getAccountContractScale(input.accountType, input.customContractScale);
   const slDistance = Math.abs(input.entryPrice - input.stopLoss);
   const stopLossPips = round2(slDistance / spec.pipSize);
-  const pipValuePerLot = getPipValuePerLot(input.instrument, input.entryPrice, input.accountType);
+  const pipValuePerLot = getPipValuePerLot(
+    input.instrument,
+    input.entryPrice,
+    input.accountType,
+    input.customContractScale
+  );
 
   if (!pipValuePerLot || stopLossPips <= 0) {
     return {
@@ -518,6 +564,7 @@ export function calculateRealizedTradeMetrics(params: {
   swap?: number;
   grossPnlOverride?: number;
   accountType?: TradingAccount['accountType'];
+  customContractScale?: number;
 }): {
   grossPnl: number | undefined;
   netPnl: number | undefined;
@@ -525,7 +572,12 @@ export function calculateRealizedTradeMetrics(params: {
   plannedRiskAmount: number;
 } {
   const plannedRiskAmount = round2(params.accountBalanceAtEntry * (params.plannedRiskPercent / 100));
-  const pipValue = getPipValuePerLot(params.instrument, params.entryPrice, params.accountType);
+  const pipValue = getPipValuePerLot(
+    params.instrument,
+    params.entryPrice,
+    params.accountType,
+    params.customContractScale
+  );
   const spec = getInstrumentSpec(params.instrument);
 
   let grossPnl = params.grossPnlOverride;

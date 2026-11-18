@@ -26,6 +26,7 @@ export type AuditAction =
   | 'private_info_updated'
   | 'leaderboard_privacy_updated'
   | 'trading_account_created'
+  | 'trading_account_updated'
   | 'account_deposit'
   | 'account_withdrawal'
   | 'trade_created'

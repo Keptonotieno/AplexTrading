@@ -48,8 +48,19 @@ export const RiskManagementView: React.FC = () => {
         stopLoss: Number(stopLoss) || 0,
         takeProfit: takeProfit ? Number(takeProfit) : undefined,
         accountType: activeAccount?.accountType,
+        customContractScale: activeAccount?.customContractScale,
       }),
-    [instrument, direction, balance, riskPercent, entryPrice, stopLoss, takeProfit, activeAccount?.accountType]
+    [
+      instrument,
+      direction,
+      balance,
+      riskPercent,
+      entryPrice,
+      stopLoss,
+      takeProfit,
+      activeAccount?.accountType,
+      activeAccount?.customContractScale,
+    ]
   );
 
   const spec = INSTRUMENT_SPECS[instrument];
@@ -239,8 +250,12 @@ export const RiskManagementView: React.FC = () => {
             </h2>
             {spec && (
               <span className="text-xs font-mono text-slate-500">
-                Contract: {(spec.contractSize * getAccountContractScale(activeAccount?.accountType)).toLocaleString()} · Pip: {spec.pipSize}
-                {activeAccount?.accountType === 'cent' ? ' (Cent)' : ''}
+                Contract: {(spec.contractSize * getAccountContractScale(activeAccount?.accountType, activeAccount?.customContractScale)).toLocaleString()} · Pip: {spec.pipSize}
+                {activeAccount?.accountType === 'cent'
+                  ? ' (Cent)'
+                  : activeAccount?.accountType === 'custom'
+                  ? ` (${activeAccount.customTypeLabel || 'Custom'})`
+                  : ''}
               </span>
             )}
           </div>

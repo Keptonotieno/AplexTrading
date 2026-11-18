@@ -1,6 +1,7 @@
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -68,6 +69,8 @@ export async function completeStudentOnboarding(params: {
   isMentorBootstrap: boolean;
   initialAccountName: string;
   initialAccountType: TradingAccount['accountType'];
+  initialCustomTypeLabel?: string;
+  initialCustomContractScale?: number;
   initialCurrency: TradingAccount['currency'];
   initialBalance: number;
   photoUrl?: string;
@@ -112,9 +115,17 @@ export async function completeStudentOnboarding(params: {
   const parsedBalance = round2(Number(params.initialBalance) || 0);
   if (parsedBalance < minBal) {
     throw new Error(
-      `${formatAccountTypeLabel(params.initialAccountType)} accounts require a minimum starting balance of $${minBal}.`
+      `${formatAccountTypeLabel(params.initialAccountType, params.initialCustomTypeLabel)} accounts require a minimum starting balance of $${minBal}.`
     );
   }
+
+  const parsedScale =
+    params.initialCustomContractScale !== undefined &&
+    Number.isFinite(params.initialCustomContractScale) &&
+    params.initialCustomContractScale > 0 &&
+    params.initialCustomContractScale <= 100
+      ? Number(params.initialCustomContractScale)
+      : undefined;
 
   const accountDoc: Record<string, unknown> = cleanPayload({
     id: accountId,
@@ -123,6 +134,12 @@ export async function completeStudentOnboarding(params: {
     currency: params.initialCurrency,
     brokerName: truncateStr(params.brokerName, 80),
     accountType: params.initialAccountType,
+    customTypeLabel:
+      params.initialAccountType === 'custom'
+        ? truncateStr(params.initialCustomTypeLabel, 60)
+        : undefined,
+    customContractScale:
+      params.initialAccountType === 'custom' ? parsedScale ?? 1 : undefined,
     initialBalance: parsedBalance,
     currentBalance: parsedBalance,
     isDefault: true,
@@ -267,19 +284,43 @@ export async function createTradingAccount(params: {
   currency: TradingAccount['currency'];
   brokerName?: string;
   accountType: TradingAccount['accountType'];
+  customTypeLabel?: string;
+  customContractScale?: number;
   initialBalance: number;
   isDefault: boolean;
+  existingAccounts?: TradingAccount[];
 }) {
   const id = generateSafeId('acct');
   const minBal = getMinimumInitialBalance(params.accountType);
   const bal = round2(Number(params.initialBalance) || 0);
   if (bal < minBal) {
     throw new Error(
-      `${formatAccountTypeLabel(params.accountType)} accounts require a minimum starting balance of $${minBal}.`
+      `${formatAccountTypeLabel(params.accountType, params.customTypeLabel)} accounts require a minimum starting balance of $${minBal}.`
     );
   }
+  const parsedScale =
+    params.customContractScale !== undefined &&
+    Number.isFinite(params.customContractScale) &&
+    params.customContractScale > 0 &&
+    params.customContractScale <= 100
+      ? Number(params.customContractScale)
+      : undefined;
+
   const batch = writeBatch(db);
+  if (params.isDefault && params.existingAccounts?.length) {
+    for (const acc of params.existingAccounts) {
+      if (acc.isDefault && acc.userId === params.userId) {
+        batch.update(doc(db, 'tradingAccounts', acc.id), {
+          isDefault: false,
+          updatedAt: tsNow(),
+        });
+      }
+    }
+  }
+
   const safeName = truncateStr(params.name, 80) || 'Trading Account';
+  const safeCustomLabel =
+    params.accountType === 'custom' ? truncateStr(params.customTypeLabel, 60) : undefined;
   batch.set(
     doc(db, 'tradingAccounts', id),
     cleanPayload({
@@ -289,6 +330,8 @@ export async function createTradingAccount(params: {
       currency: params.currency,
       brokerName: truncateStr(params.brokerName, 80),
       accountType: params.accountType,
+      customTypeLabel: safeCustomLabel,
+      customContractScale: params.accountType === 'custom' ? parsedScale ?? 1 : undefined,
       initialBalance: bal,
       currentBalance: bal,
       isDefault: params.isDefault,
@@ -301,13 +344,81 @@ export async function createTradingAccount(params: {
     action: 'trading_account_created',
     targetType: 'tradingAccount',
     targetId: id,
-    details: `Created ${formatAccountTypeLabel(params.accountType)} account "${safeName}" (${params.currency} ${bal})`,
+    details: `Created ${formatAccountTypeLabel(params.accountType, safeCustomLabel)} account "${safeName}" (${params.currency} ${bal})`,
   });
   try {
     await batch.commit();
     return id;
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, `tradingAccounts/${id}`);
+  }
+}
+
+export async function updateTradingAccount(params: {
+  userId: string;
+  account: TradingAccount;
+  name: string;
+  currency: TradingAccount['currency'];
+  brokerName?: string;
+  accountType: TradingAccount['accountType'];
+  customTypeLabel?: string;
+  customContractScale?: number;
+  isDefault: boolean;
+  existingAccounts?: TradingAccount[];
+}) {
+  const safeName = truncateStr(params.name, 80);
+  if (!safeName) {
+    throw new Error('Trading account name is required.');
+  }
+  const parsedScale =
+    params.customContractScale !== undefined &&
+    Number.isFinite(params.customContractScale) &&
+    params.customContractScale > 0 &&
+    params.customContractScale <= 100
+      ? Number(params.customContractScale)
+      : undefined;
+
+  const batch = writeBatch(db);
+  if (params.isDefault && params.existingAccounts?.length) {
+    for (const acc of params.existingAccounts) {
+      if (acc.id !== params.account.id && acc.isDefault && acc.userId === params.userId) {
+        batch.update(doc(db, 'tradingAccounts', acc.id), {
+          isDefault: false,
+          updatedAt: tsNow(),
+        });
+      }
+    }
+  }
+
+  const safeBroker = truncateStr(params.brokerName, 80);
+  const safeCustomLabel =
+    params.accountType === 'custom' ? truncateStr(params.customTypeLabel, 60) : undefined;
+
+  const updatePayload: Record<string, unknown> = {
+    name: safeName,
+    currency: params.currency,
+    accountType: params.accountType,
+    brokerName: safeBroker ? safeBroker : deleteField(),
+    customTypeLabel: safeCustomLabel ? safeCustomLabel : deleteField(),
+    customContractScale:
+      params.accountType === 'custom' ? parsedScale ?? 1 : deleteField(),
+    isDefault: params.isDefault,
+    updatedAt: tsNow(),
+  };
+
+  batch.update(doc(db, 'tradingAccounts', params.account.id), updatePayload);
+  queueAuditLogInBatch(batch, {
+    actorId: params.userId,
+    action: 'trading_account_updated',
+    targetType: 'tradingAccount',
+    targetId: params.account.id,
+    details: `Customized account "${safeName}" (${formatAccountTypeLabel(params.accountType, safeCustomLabel)}, ${params.currency}${params.accountType === 'custom' ? `, ${parsedScale ?? 1}x scale` : ''})`,
+  });
+
+  try {
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `tradingAccounts/${params.account.id}`);
   }
 }
 
@@ -416,6 +527,7 @@ export async function saveTradeRecord(params: {
     swap: form.swap,
     grossPnlOverride: form.grossPnlOverride,
     accountType: account.accountType,
+    customContractScale: account.customContractScale,
   });
 
   const violationsTriggered: string[] = [];

@@ -120,7 +120,7 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const saved = typeof window !== 'undefined' ? localStorage.getItem('fm_theme') : null;
-    return saved === 'light' ? 'light' : 'dark';
+    return saved === 'dark' ? 'dark' : 'light';
   });
 
   useEffect(() => {
