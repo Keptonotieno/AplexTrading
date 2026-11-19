@@ -60,6 +60,7 @@ export const AuthPortal: React.FC = () => {
     clearAuthError,
     theme,
     toggleTheme,
+    logout,
   } = useMentorship();
   const [mode, setMode] = useState<AuthMode>(() =>
     isPrivateAdminRoute() ? 'admin' : 'signin'
@@ -401,7 +402,12 @@ export const AuthPortal: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={() => signOut(auth)}
+              onClick={async () => {
+                setError(null);
+                setProviderHelpUrl(null);
+                setNotice(null);
+                await logout();
+              }}
               className="w-full py-2 text-xs text-slate-500 hover:text-slate-900 dark:hover:text-slate-200 transition-colors"
             >
               Sign out and use another account
@@ -431,7 +437,12 @@ export const AuthPortal: React.FC = () => {
             </div>
             <button
               type="button"
-              onClick={() => signOut(auth)}
+              onClick={async () => {
+                setError(null);
+                setProviderHelpUrl(null);
+                setNotice(null);
+                await logout();
+              }}
               className="text-xs font-medium text-slate-500 hover:text-slate-900 dark:hover:text-white whitespace-nowrap transition-colors"
             >
               Sign out
@@ -707,7 +718,7 @@ export const AuthPortal: React.FC = () => {
       : mode === 'register'
       ? {
           title: 'Create a student account',
-          subtitle: 'Set up your manual journal with Cent ($10+), Standard ($50+), or Custom accounts.',
+          subtitle: 'Set up your manual journal with Cent, Standard, or Custom accounts ($10+).',
         }
       : {
           title: 'Reset your password',

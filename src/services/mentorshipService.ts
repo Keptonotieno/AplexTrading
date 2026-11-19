@@ -61,6 +61,8 @@ export async function recordAuditLog(params: {
   return logAuditEvent(params);
 }
 
+const inFlightProfileSyncs = new Map<string, Promise<void>>();
+
 /**
  * Synchronizes an authenticated & verified Firebase user's profile with Firestore.
  * - Creates users/{uid} (with strict default 'student' role) and users/{uid}/private/info if missing.
@@ -69,97 +71,109 @@ export async function recordAuditLog(params: {
 export async function syncAuthenticatedUserProfile(user: User): Promise<void> {
   if (!user?.uid || !user.emailVerified) return;
 
-  const userRef = doc(db, 'users', user.uid);
-  const privateRef = doc(db, 'users', user.uid, 'private', 'info');
+  const existingPromise = inFlightProfileSyncs.get(user.uid);
+  if (existingPromise) return existingPromise;
 
-  let userSnap;
-  let privateSnap;
-  try {
-    [userSnap, privateSnap] = await Promise.all([getDoc(userRef), getDoc(privateRef)]);
-  } catch (err) {
-    handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
-  }
+  const syncTask = (async () => {
+    const userRef = doc(db, 'users', user.uid);
+    const privateRef = doc(db, 'users', user.uid, 'private', 'info');
 
-  const safeEmail = truncateStr(user.email || undefined, 254);
-  const emailPrefix = safeEmail ? safeEmail.split('@')[0] : undefined;
-  const googleDisplayName = truncateStr(user.displayName || emailPrefix || 'Trader', 120) || 'Trader';
-  const googlePhotoUrl = truncateStr(user.photoURL || undefined, 500);
+    let userSnap;
+    let privateSnap;
+    try {
+      [userSnap, privateSnap] = await Promise.all([getDoc(userRef), getDoc(privateRef)]);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
+    }
 
-  const batch = writeBatch(db);
-  let hasWrites = false;
+    const safeEmail = truncateStr(user.email || undefined, 254);
+    const emailPrefix = safeEmail ? safeEmail.split('@')[0] : undefined;
+    const googleDisplayName = truncateStr(user.displayName || emailPrefix || 'Trader', 120) || 'Trader';
+    const googlePhotoUrl = truncateStr(user.photoURL || undefined, 500);
 
-  if (!userSnap.exists()) {
-    batch.set(
-      userRef,
-      cleanPayload({
-        uid: user.uid,
-        displayName: googleDisplayName,
-        role: 'student',
-        status: 'active',
-        publicLeaderboardOptIn: false,
-        photoUrl: googlePhotoUrl,
-        createdAt: tsNow(),
-        updatedAt: tsNow(),
-      })
-    );
-    hasWrites = true;
-  } else {
-    const existing = userSnap.data() as Partial<UserAccount>;
-    const shouldSyncPhoto = Boolean(googlePhotoUrl && existing.photoUrl !== googlePhotoUrl);
-    const shouldSyncName = Boolean(
-      (!existing.displayName || existing.displayName === 'Trader') &&
-        googleDisplayName &&
-        existing.displayName !== googleDisplayName
-    );
-    if (shouldSyncPhoto || shouldSyncName) {
-      batch.update(
+    const batch = writeBatch(db);
+    let hasWrites = false;
+
+    if (!userSnap.exists()) {
+      batch.set(
         userRef,
         cleanPayload({
-          ...(shouldSyncName ? { displayName: googleDisplayName } : {}),
-          ...(shouldSyncPhoto ? { photoUrl: googlePhotoUrl } : {}),
-          updatedAt: tsNow(),
-        })
-      );
-      hasWrites = true;
-    }
-  }
-
-  if (safeEmail) {
-    if (!privateSnap.exists()) {
-      batch.set(
-        privateRef,
-        cleanPayload({
           uid: user.uid,
-          email: safeEmail,
-          country: 'Global',
+          displayName: googleDisplayName,
+          role: 'student',
+          status: 'active',
+          publicLeaderboardOptIn: false,
+          photoUrl: googlePhotoUrl,
+          createdAt: tsNow(),
           updatedAt: tsNow(),
         })
       );
       hasWrites = true;
     } else {
-      const existingPrivate = privateSnap.data() as Partial<PrivateUserInfo>;
-      if (existingPrivate.email !== safeEmail) {
-        batch.set(
-          privateRef,
+      const existing = userSnap.data() as Partial<UserAccount>;
+      const shouldSyncPhoto = Boolean(googlePhotoUrl && existing.photoUrl !== googlePhotoUrl);
+      const shouldSyncName = Boolean(
+        (!existing.displayName || existing.displayName === 'Trader') &&
+          googleDisplayName &&
+          existing.displayName !== googleDisplayName
+      );
+      if (shouldSyncPhoto || shouldSyncName) {
+        batch.update(
+          userRef,
           cleanPayload({
-            uid: user.uid,
-            email: safeEmail,
-            phone: existingPrivate.phone ? truncateStr(existingPrivate.phone, 32) : undefined,
-            country: truncateStr(existingPrivate.country, 80) || 'Global',
+            ...(shouldSyncName ? { displayName: googleDisplayName } : {}),
+            ...(shouldSyncPhoto ? { photoUrl: googlePhotoUrl } : {}),
             updatedAt: tsNow(),
           })
         );
         hasWrites = true;
       }
     }
-  }
 
-  if (!hasWrites) return;
+    if (safeEmail) {
+      if (!privateSnap.exists()) {
+        batch.set(
+          privateRef,
+          cleanPayload({
+            uid: user.uid,
+            email: safeEmail,
+            country: 'Global',
+            updatedAt: tsNow(),
+          })
+        );
+        hasWrites = true;
+      } else {
+        const existingPrivate = privateSnap.data() as Partial<PrivateUserInfo>;
+        if (existingPrivate.email !== safeEmail) {
+          batch.set(
+            privateRef,
+            cleanPayload({
+              uid: user.uid,
+              email: safeEmail,
+              phone: existingPrivate.phone ? truncateStr(existingPrivate.phone, 32) : undefined,
+              country: truncateStr(existingPrivate.country, 80) || 'Global',
+              updatedAt: tsNow(),
+            })
+          );
+          hasWrites = true;
+        }
+      }
+    }
 
+    if (!hasWrites) return;
+
+    try {
+      await batch.commit();
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+    }
+  })();
+
+  inFlightProfileSyncs.set(user.uid, syncTask);
   try {
-    await batch.commit();
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+    await syncTask;
+  } finally {
+    inFlightProfileSyncs.delete(user.uid);
   }
 }
 
@@ -180,6 +194,11 @@ export async function completeStudentOnboarding(params: {
   initialBalance: number;
   photoUrl?: string;
 }) {
+  const pendingSync = inFlightProfileSyncs.get(params.uid);
+  if (pendingSync) {
+    await pendingSync.catch(() => {});
+  }
+
   const userRef = doc(db, 'users', params.uid);
   let existingUserSnap;
   try {

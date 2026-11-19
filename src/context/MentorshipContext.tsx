@@ -317,6 +317,49 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
     });
   }, [authReady, firebaseUser, authRevision]);
 
+  // Automatically detect when an unverified email user verifies their email in another tab or reloads
+  useEffect(() => {
+    if (!authReady || !firebaseUser || firebaseUser.emailVerified) return;
+    let active = true;
+    let checking = false;
+
+    const checkVerification = async () => {
+      if (!active || checking || !auth.currentUser || auth.currentUser.emailVerified) return;
+      checking = true;
+      try {
+        await auth.currentUser.reload();
+        if (active && auth.currentUser?.emailVerified) {
+          await auth.currentUser.getIdToken(true);
+        }
+      } catch {
+        // Ignore transient network errors during background verification checks
+      } finally {
+        checking = false;
+      }
+    };
+
+    const onFocus = () => {
+      void checkVerification();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void checkVerification();
+      }
+    };
+
+    void checkVerification();
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    const interval = window.setInterval(checkVerification, 5000);
+
+    return () => {
+      active = false;
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.clearInterval(interval);
+    };
+  }, [authReady, firebaseUser?.uid, firebaseUser?.emailVerified]);
+
   // Bootstrap admin defaults when verified admin signs in, and auto-enter Admin Console on verified admin sign-in
   useEffect(() => {
     if (authReady && firebaseUser && firebaseUser.emailVerified && isAllowedAdminEmail(firebaseUser.email)) {
