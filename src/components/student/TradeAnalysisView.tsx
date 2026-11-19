@@ -24,6 +24,7 @@ import {
   saveTradeScreenshot,
   updateTradeScreenshotNotes,
 } from '../../services/mentorshipService';
+import { uploadChartScreenshot } from '../../services/storageService';
 import type { ScreenshotStage, TradeScreenshot } from '../../types/domain';
 import type { StudentTab } from '../AppShell';
 import { AuthenticatedImage } from '../AuthenticatedImage';
@@ -249,33 +250,12 @@ export const TradeAnalysisView: React.FC<Props> = ({ onNavigate }) => {
     setNotice(null);
 
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error('Failed to read image file.'));
-        reader.readAsDataURL(file);
+      const payload = await uploadChartScreenshot({
+        file,
+        userId: firebaseUser.uid,
+        tradeId: activeTrade.id,
+        stage,
       });
-
-      const token = await auth.currentUser?.getIdToken();
-      if (!token) throw new Error('Authentication token unavailable. Please sign in again.');
-
-      const res = await fetch('/api/uploads/screenshot', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          dataUrl,
-          fileName: file.name,
-          mimeType: file.type,
-        }),
-      });
-
-      const payload = await res.json();
-      if (!res.ok) {
-        throw new Error(payload.error || 'Screenshot upload failed.');
-      }
 
       await saveTradeScreenshot({
         tradeId: activeTrade.id,

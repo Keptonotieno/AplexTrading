@@ -527,9 +527,9 @@ export const AppShell: React.FC<AppShellProps> = ({
                 onClick={() => setProfileMenuOpen((v) => !v)}
                 className="flex items-center gap-2.5 py-1 px-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800/60 transition-colors"
               >
-                {firebaseUser?.photoURL ? (
+                {firebaseUser?.photoURL || userAccount?.photoUrl ? (
                   <img
-                    src={firebaseUser.photoURL}
+                    src={firebaseUser?.photoURL || userAccount?.photoUrl}
                     alt={displayName}
                     referrerPolicy="no-referrer"
                     className="w-8 h-8 rounded-full object-cover border border-slate-200 dark:border-slate-700"

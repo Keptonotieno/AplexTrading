@@ -6,6 +6,7 @@ import {
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
   updateProfile,
 } from 'firebase/auth';
@@ -25,7 +26,8 @@ import {
   Sun,
   UserPlus,
 } from 'lucide-react';
-import { auth, isAllowedAdminEmail } from '../lib/firebase';
+import { auth, authPersistenceReady } from '../lib/firebase';
+import { formatFirebaseAuthError, verifyAdminSession } from '../lib/authHelpers';
 import {
   ACCOUNT_TYPE_SPECS,
   formatAccountTypeLabel,
@@ -49,7 +51,15 @@ function isPrivateAdminRoute(): boolean {
 }
 
 export const AuthPortal: React.FC = () => {
-  const { firebaseUser, needsOnboarding, theme, toggleTheme } = useMentorship();
+  const {
+    firebaseUser,
+    needsOnboarding,
+    authError,
+    authHelpUrl,
+    clearAuthError,
+    theme,
+    toggleTheme,
+  } = useMentorship();
   const [mode, setMode] = useState<AuthMode>(() =>
     isPrivateAdminRoute() ? 'admin' : 'signin'
   );
@@ -59,16 +69,25 @@ export const AuthPortal: React.FC = () => {
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
+    if (authError) {
+      setError(authError);
+      setProviderHelpUrl(authHelpUrl);
+    }
+  }, [authError, authHelpUrl]);
+
+  useEffect(() => {
     const onHashChange = () => {
       if (isPrivateAdminRoute()) {
         setMode('admin');
         setError(null);
+        setProviderHelpUrl(null);
         setNotice(null);
+        clearAuthError();
       }
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
+  }, [clearAuthError]);
 
   // Sign In / Register credentials
   const [email, setEmail] = useState('');
@@ -77,6 +96,11 @@ export const AuthPortal: React.FC = () => {
 
   // Onboarding & Registration Profile fields
   const [fullName, setFullName] = useState(firebaseUser?.displayName || '');
+  useEffect(() => {
+    if (firebaseUser?.displayName && !fullName) {
+      setFullName(firebaseUser.displayName);
+    }
+  }, [firebaseUser?.displayName, fullName]);
   const [phone, setPhone] = useState('');
   const [country, setCountry] = useState('');
   const [experienceLevel, setExperienceLevel] = useState<StudentProfile['experienceLevel']>('intermediate');
@@ -99,31 +123,51 @@ export const AuthPortal: React.FC = () => {
   const handleGoogleAuth = async () => {
     setBusy(true);
     setError(null);
+    setProviderHelpUrl(null);
     setNotice(null);
+    clearAuthError();
+    const provider = new GoogleAuthProvider();
+    provider.addScope('email');
+    provider.addScope('profile');
+    provider.setCustomParameters({ prompt: 'select_account' });
+
     try {
+      await authPersistenceReady;
       if (mode === 'admin' && typeof window !== 'undefined') {
         sessionStorage.setItem('fm_requested_admin', '1');
       } else if (typeof window !== 'undefined') {
         sessionStorage.removeItem('fm_requested_admin');
       }
-      const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({ prompt: 'select_account' });
+
       const cred = await signInWithPopup(auth, provider);
       if (mode === 'admin') {
-        const token = await cred.user.getIdToken();
-        const verifyRes = await fetch('/api/auth/verify-admin', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!verifyRes.ok) {
+        const authorized = await verifyAdminSession(cred.user);
+        if (!authorized) {
           sessionStorage.removeItem('fm_requested_admin');
           await signOut(auth);
-          setError('Access Denied: Only authorized Mentor / Administrator accounts can access the Admin Portal.');
+          setError(
+            'Access Denied: Only authorized Mentor / Administrator accounts can access the Admin Portal.'
+          );
         }
       }
     } catch (err: unknown) {
-      if (typeof window !== 'undefined') sessionStorage.removeItem('fm_requested_admin');
-      const msg = err instanceof Error ? err.message : 'Google sign-in failed.';
-      setError(msg);
+      const code = (err as { code?: string })?.code;
+      if (code === 'auth/popup-blocked') {
+        try {
+          await signInWithRedirect(auth, provider);
+          return;
+        } catch (redirectErr: unknown) {
+          if (typeof window !== 'undefined') sessionStorage.removeItem('fm_requested_admin');
+          const formatted = formatFirebaseAuthError(redirectErr, 'google');
+          setError(formatted.message);
+          setProviderHelpUrl(formatted.helpUrl || null);
+        }
+      } else {
+        if (typeof window !== 'undefined') sessionStorage.removeItem('fm_requested_admin');
+        const formatted = formatFirebaseAuthError(err, 'google');
+        setError(formatted.message);
+        setProviderHelpUrl(formatted.helpUrl || null);
+      }
     } finally {
       setBusy(false);
     }
@@ -135,7 +179,9 @@ export const AuthPortal: React.FC = () => {
     setError(null);
     setProviderHelpUrl(null);
     setNotice(null);
+    clearAuthError();
     try {
+      await authPersistenceReady;
       if (mode === 'admin' && typeof window !== 'undefined') {
         sessionStorage.setItem('fm_requested_admin', '1');
       } else if (typeof window !== 'undefined') {
@@ -147,11 +193,8 @@ export const AuthPortal: React.FC = () => {
           setError('Your administrator email must be verified before entering the Admin Portal.');
           return;
         }
-        const token = await cred.user.getIdToken();
-        const verifyRes = await fetch('/api/auth/verify-admin', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!verifyRes.ok) {
+        const authorized = await verifyAdminSession(cred.user);
+        if (!authorized) {
           sessionStorage.removeItem('fm_requested_admin');
           await signOut(auth);
           setError('Access Denied: This account does not hold verified Administrator privileges.');
@@ -159,24 +202,9 @@ export const AuthPortal: React.FC = () => {
       }
     } catch (err: unknown) {
       if (typeof window !== 'undefined') sessionStorage.removeItem('fm_requested_admin');
-      const code = (err as { code?: string })?.code;
-      if (code === 'auth/operation-not-allowed') {
-        setProviderHelpUrl(
-          'https://console.firebase.google.com/project/gen-lang-client-0535362261/authentication/providers'
-        );
-        setError(
-          'Email/Password login is disabled in your Firebase Console for project gen-lang-client-0535362261. Enable the Email/Password provider in Firebase Authentication (and create the user under Authentication → Users), or click "Admin Sign In with Google" below.'
-        );
-      } else if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
-        setProviderHelpUrl(
-          'https://console.firebase.google.com/project/gen-lang-client-0535362261/authentication/users'
-        );
-        setError(
-          'No matching Firebase Auth Email/Password user found or incorrect password. Confirm the account exists in Firebase Console → Authentication → Users (or register it first on the Register tab).'
-        );
-      } else {
-        setError(err instanceof Error ? err.message : 'Sign-in failed.');
-      }
+      const formatted = formatFirebaseAuthError(err, 'email-signin');
+      setError(formatted.message);
+      setProviderHelpUrl(formatted.helpUrl || null);
     } finally {
       setBusy(false);
     }
@@ -190,24 +218,19 @@ export const AuthPortal: React.FC = () => {
     }
     setBusy(true);
     setError(null);
+    setProviderHelpUrl(null);
     setNotice(null);
+    clearAuthError();
     try {
+      await authPersistenceReady;
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       await updateProfile(cred.user, { displayName: fullName.trim() });
       await sendEmailVerification(cred.user);
       setNotice('Verification link sent to your email address. Please verify your email and click Refresh Status.');
     } catch (err: unknown) {
-      const code = (err as { code?: string })?.code;
-      if (code === 'auth/operation-not-allowed') {
-        setProviderHelpUrl(
-          'https://console.firebase.google.com/project/gen-lang-client-0535362261/authentication/providers'
-        );
-        setError(
-          'Email/Password registration is disabled in your Firebase Console for project gen-lang-client-0535362261. Enable Email/Password under Authentication → Sign-in method or sign in with Google.'
-        );
-      } else {
-        setError(err instanceof Error ? err.message : 'Registration failed.');
-      }
+      const formatted = formatFirebaseAuthError(err, 'email-register');
+      setError(formatted.message);
+      setProviderHelpUrl(formatted.helpUrl || null);
     } finally {
       setBusy(false);
     }
@@ -221,12 +244,16 @@ export const AuthPortal: React.FC = () => {
     }
     setBusy(true);
     setError(null);
+    setProviderHelpUrl(null);
     setNotice(null);
+    clearAuthError();
     try {
       await sendPasswordResetEmail(auth, email.trim());
       setNotice('Password recovery email sent. Check your inbox and spam folder.');
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Unable to send password reset email.');
+      const formatted = formatFirebaseAuthError(err, 'reset');
+      setError(formatted.message);
+      setProviderHelpUrl(formatted.helpUrl || null);
     } finally {
       setBusy(false);
     }
@@ -266,9 +293,6 @@ export const AuthPortal: React.FC = () => {
     setBusy(true);
     setError(null);
     try {
-      const isMentor =
-        firebaseUser.emailVerified && isAllowedAdminEmail(firebaseUser.email);
-
       await completeStudentOnboarding({
         uid: firebaseUser.uid,
         email: firebaseUser.email || email,
@@ -278,7 +302,6 @@ export const AuthPortal: React.FC = () => {
         experienceLevel,
         preferredInstruments,
         brokerName: brokerName.trim() || undefined,
-        isMentorBootstrap: isMentor,
         initialAccountName: initialAccountName.trim() || 'Primary Trading Account',
         initialAccountType,
         initialCustomTypeLabel:
@@ -789,6 +812,7 @@ export const AuthPortal: React.FC = () => {
                     setError(null);
                     setProviderHelpUrl(null);
                     setNotice(null);
+                    clearAuthError();
                   }}
                   className={`py-2 text-xs font-semibold rounded-lg transition-all duration-150 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 motion-reduce:transition-none ${
                     mode === 'signin'
@@ -807,6 +831,7 @@ export const AuthPortal: React.FC = () => {
                     setError(null);
                     setProviderHelpUrl(null);
                     setNotice(null);
+                    clearAuthError();
                   }}
                   className={`py-2 text-xs font-semibold rounded-lg transition-all duration-150 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 motion-reduce:transition-none ${
                     mode === 'register'
@@ -825,6 +850,7 @@ export const AuthPortal: React.FC = () => {
                     setError(null);
                     setProviderHelpUrl(null);
                     setNotice(null);
+                    clearAuthError();
                   }}
                   className={`py-2 text-xs font-semibold rounded-lg transition-all duration-150 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 motion-reduce:transition-none ${
                     mode === 'reset'
@@ -855,6 +881,7 @@ export const AuthPortal: React.FC = () => {
                     setError(null);
                     setProviderHelpUrl(null);
                     setNotice(null);
+                    clearAuthError();
                     if (typeof window !== 'undefined') {
                       window.history.replaceState(null, '', window.location.pathname);
                     }
@@ -970,7 +997,9 @@ export const AuthPortal: React.FC = () => {
                         onClick={() => {
                           setMode('reset');
                           setError(null);
+                          setProviderHelpUrl(null);
                           setNotice(null);
+                          clearAuthError();
                         }}
                         className="text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:underline"
                       >

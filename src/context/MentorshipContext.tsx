@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
+import { getRedirectResult, onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import {
   collection,
   doc,
@@ -10,18 +10,24 @@ import {
 } from 'firebase/firestore';
 import {
   auth,
+  authPersistenceReady,
   db,
   handleFirestoreError,
   isAllowedAdminEmail,
   OperationType,
 } from '../lib/firebase';
+import { formatFirebaseAuthError, verifyAdminSession } from '../lib/authHelpers';
 import {
   computePortfolioMetrics,
   DEFAULT_RISK_POLICY,
   DEFAULT_SYSTEM_SETTINGS,
   type PortfolioMetrics,
 } from '../lib/forexCalculations';
-import { ensureAdminDefaults, syncLeaderboardEntry } from '../services/mentorshipService';
+import {
+  ensureAdminDefaults,
+  syncAuthenticatedUserProfile,
+  syncLeaderboardEntry,
+} from '../services/mentorshipService';
 import { toIsoString } from '../lib/firestore-helpers';
 import type {
   AccountTransaction,
@@ -53,6 +59,9 @@ interface MentorshipContextValue {
   authReady: boolean;
   loadingData: boolean;
   needsOnboarding: boolean;
+  authError: string | null;
+  authHelpUrl: string | null;
+  clearAuthError: () => void;
   isVerifiedAdmin: boolean;
   workspaceMode: 'student' | 'admin';
   setWorkspaceMode: (mode: 'student' | 'admin') => void;
@@ -117,6 +126,12 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
   const [authReady, setAuthReady] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
   const [isAdminDoc, setIsAdminDoc] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authHelpUrl, setAuthHelpUrl] = useState<string | null>(null);
+  const clearAuthError = useCallback(() => {
+    setAuthError(null);
+    setAuthHelpUrl(null);
+  }, []);
 
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const saved = typeof window !== 'undefined' ? localStorage.getItem('fm_theme') : null;
@@ -138,6 +153,7 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
   // Student state
   const [userAccount, setUserAccount] = useState<UserAccount | null>(null);
   const [userAccountChecked, setUserAccountChecked] = useState(false);
+  const [studentProfileChecked, setStudentProfileChecked] = useState(false);
   const [privateInfo, setPrivateInfo] = useState<PrivateUserInfo | null>(null);
   const [studentProfile, setStudentProfile] = useState<StudentProfile | null>(null);
   const [tradingAccounts, setTradingAccounts] = useState<TradingAccount[]>([]);
@@ -184,6 +200,42 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
   const [adminAllMentorReviews, setAdminAllMentorReviews] = useState<MentorReview[]>([]);
   const [adminAuditLogs, setAdminAuditLogs] = useState<AuditLog[]>([]);
   const autoRoutedAdminUidRef = useRef<string | null>(null);
+  const syncedProfileUidRef = useRef<string | null>(null);
+
+  // Complete any pending signInWithRedirect fallback cleanly and check admin portal claim
+  useEffect(() => {
+    let active = true;
+    authPersistenceReady
+      .then(() => getRedirectResult(auth))
+      .then(async (cred) => {
+        if (!active || !cred?.user) return;
+        const requestedAdmin =
+          typeof window !== 'undefined' && sessionStorage.getItem('fm_requested_admin') === '1';
+        if (requestedAdmin) {
+          const authorized = await verifyAdminSession(cred.user);
+          if (!authorized) {
+            sessionStorage.removeItem('fm_requested_admin');
+            await signOut(auth);
+            if (active) {
+              setAuthError(
+                'Access Denied: Only authorized Mentor / Administrator accounts can access the Admin Portal.'
+              );
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (typeof window !== 'undefined') sessionStorage.removeItem('fm_requested_admin');
+        if (active) {
+          const formatted = formatFirebaseAuthError(err, 'google');
+          setAuthError(formatted.message);
+          setAuthHelpUrl(formatted.helpUrl || null);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Auth listener
   useEffect(() => {
@@ -208,10 +260,13 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
         setIsAdminDoc(false);
         setWorkspaceModeState('student');
         autoRoutedAdminUidRef.current = null;
+        syncedProfileUidRef.current = null;
         setUserAccountChecked(true);
+        setStudentProfileChecked(true);
         setLoadingData(false);
       } else {
         setUserAccountChecked(false);
+        setStudentProfileChecked(false);
         setLoadingData(true);
       }
     });
@@ -238,6 +293,16 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
   );
 
   const workspaceMode: 'student' | 'admin' = isVerifiedAdmin ? workspaceModeState : 'student';
+
+  // Sync authenticated Google / verified user profile once per active session
+  useEffect(() => {
+    if (!authReady || !firebaseUser || !firebaseUser.emailVerified) return;
+    if (syncedProfileUidRef.current === firebaseUser.uid) return;
+    syncedProfileUidRef.current = firebaseUser.uid;
+    syncAuthenticatedUserProfile(firebaseUser).catch((err) => {
+      console.warn('Authenticated profile sync warning:', err instanceof Error ? err.message : err);
+    });
+  }, [authReady, firebaseUser]);
 
   // Bootstrap admin defaults when verified admin signs in, and auto-enter Admin Console on verified admin sign-in
   useEffect(() => {
@@ -294,7 +359,6 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
         (snap) => {
           setUserAccount(snap.exists() ? (snap.data() as UserAccount) : null);
           setUserAccountChecked(true);
-          setLoadingData(false);
         },
         (err) => handleFirestoreError(err, OperationType.GET, `users/${uid}`)
       )
@@ -311,7 +375,11 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
     unsubs.push(
       onSnapshot(
         doc(db, 'studentProfiles', uid),
-        (snap) => setStudentProfile(snap.exists() ? (snap.data() as StudentProfile) : null),
+        (snap) => {
+          setStudentProfile(snap.exists() ? (snap.data() as StudentProfile) : null);
+          setStudentProfileChecked(true);
+          setLoadingData(false);
+        },
         (err) => handleFirestoreError(err, OperationType.GET, `studentProfiles/${uid}`)
       )
     );
@@ -692,10 +760,21 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
   );
 
   const needsOnboarding = Boolean(
-    authReady && firebaseUser && firebaseUser.emailVerified && userAccountChecked && !userAccount
+    authReady &&
+      firebaseUser &&
+      firebaseUser.emailVerified &&
+      userAccountChecked &&
+      studentProfileChecked &&
+      !studentProfile
   );
 
   const logout = async () => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('fm_requested_admin');
+    }
+    syncedProfileUidRef.current = null;
+    autoRoutedAdminUidRef.current = null;
+    clearAuthError();
     await signOut(auth);
   };
 
@@ -706,6 +785,9 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
         authReady,
         loadingData,
         needsOnboarding,
+        authError,
+        authHelpUrl,
+        clearAuthError,
         isVerifiedAdmin,
         workspaceMode,
         setWorkspaceMode,

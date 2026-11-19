@@ -1,3 +1,4 @@
+import type { User } from 'firebase/auth';
 import {
   collection,
   deleteDoc,
@@ -57,6 +58,108 @@ export async function recordAuditLog(params: {
   return logAuditEvent(params);
 }
 
+/**
+ * Synchronizes an authenticated & verified Firebase user's profile with Firestore.
+ * - Creates users/{uid} (with strict default 'student' role) and users/{uid}/private/info if missing.
+ * - For returning users, updates changed photoUrl / email without duplicating docs or elevating privileges.
+ */
+export async function syncAuthenticatedUserProfile(user: User): Promise<void> {
+  if (!user?.uid || !user.emailVerified) return;
+
+  const userRef = doc(db, 'users', user.uid);
+  const privateRef = doc(db, 'users', user.uid, 'private', 'info');
+
+  let userSnap;
+  let privateSnap;
+  try {
+    [userSnap, privateSnap] = await Promise.all([getDoc(userRef), getDoc(privateRef)]);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
+  }
+
+  const safeEmail = truncateStr(user.email || undefined, 254);
+  const emailPrefix = safeEmail ? safeEmail.split('@')[0] : undefined;
+  const googleDisplayName = truncateStr(user.displayName || emailPrefix || 'Trader', 120) || 'Trader';
+  const googlePhotoUrl = truncateStr(user.photoURL || undefined, 500);
+
+  const batch = writeBatch(db);
+  let hasWrites = false;
+
+  if (!userSnap.exists()) {
+    batch.set(
+      userRef,
+      cleanPayload({
+        uid: user.uid,
+        displayName: googleDisplayName,
+        role: 'student',
+        status: 'active',
+        publicLeaderboardOptIn: false,
+        photoUrl: googlePhotoUrl,
+        createdAt: tsNow(),
+        updatedAt: tsNow(),
+      })
+    );
+    hasWrites = true;
+  } else {
+    const existing = userSnap.data() as Partial<UserAccount>;
+    const shouldSyncPhoto = Boolean(googlePhotoUrl && existing.photoUrl !== googlePhotoUrl);
+    const shouldSyncName = Boolean(
+      (!existing.displayName || existing.displayName === 'Trader') &&
+        googleDisplayName &&
+        existing.displayName !== googleDisplayName
+    );
+    if (shouldSyncPhoto || shouldSyncName) {
+      batch.update(
+        userRef,
+        cleanPayload({
+          ...(shouldSyncName ? { displayName: googleDisplayName } : {}),
+          ...(shouldSyncPhoto ? { photoUrl: googlePhotoUrl } : {}),
+          updatedAt: tsNow(),
+        })
+      );
+      hasWrites = true;
+    }
+  }
+
+  if (safeEmail) {
+    if (!privateSnap.exists()) {
+      batch.set(
+        privateRef,
+        cleanPayload({
+          uid: user.uid,
+          email: safeEmail,
+          country: 'Global',
+          updatedAt: tsNow(),
+        })
+      );
+      hasWrites = true;
+    } else {
+      const existingPrivate = privateSnap.data() as Partial<PrivateUserInfo>;
+      if (existingPrivate.email !== safeEmail) {
+        batch.set(
+          privateRef,
+          cleanPayload({
+            uid: user.uid,
+            email: safeEmail,
+            phone: existingPrivate.phone ? truncateStr(existingPrivate.phone, 32) : undefined,
+            country: truncateStr(existingPrivate.country, 80) || 'Global',
+            updatedAt: tsNow(),
+          })
+        );
+        hasWrites = true;
+      }
+    }
+  }
+
+  if (!hasWrites) return;
+
+  try {
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
+  }
+}
+
 export async function completeStudentOnboarding(params: {
   uid: string;
   email: string;
@@ -66,7 +169,6 @@ export async function completeStudentOnboarding(params: {
   experienceLevel: StudentProfile['experienceLevel'];
   preferredInstruments: string[];
   brokerName?: string;
-  isMentorBootstrap: boolean;
   initialAccountName: string;
   initialAccountType: TradingAccount['accountType'];
   initialCustomTypeLabel?: string;
@@ -75,20 +177,41 @@ export async function completeStudentOnboarding(params: {
   initialBalance: number;
   photoUrl?: string;
 }) {
+  const userRef = doc(db, 'users', params.uid);
+  let existingUserSnap;
+  try {
+    existingUserSnap = await getDoc(userRef);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, `users/${params.uid}`);
+  }
+
   const batch = writeBatch(db);
   const safeName = truncateStr(params.fullName, 120) || 'Trader';
+  const safePhoto = truncateStr(params.photoUrl, 500);
   const accountId = generateSafeId('acct');
 
-  const userDoc: Record<string, unknown> = cleanPayload({
-    uid: params.uid,
-    displayName: safeName,
-    role: params.isMentorBootstrap ? 'mentor' : 'student',
-    status: 'active',
-    publicLeaderboardOptIn: false,
-    photoUrl: truncateStr(params.photoUrl, 500),
-    createdAt: tsNow(),
-    updatedAt: tsNow(),
-  });
+  if (existingUserSnap.exists()) {
+    batch.update(
+      userRef,
+      cleanPayload({
+        displayName: safeName,
+        ...(safePhoto ? { photoUrl: safePhoto } : {}),
+        updatedAt: tsNow(),
+      })
+    );
+  } else {
+    const userDoc: Record<string, unknown> = cleanPayload({
+      uid: params.uid,
+      displayName: safeName,
+      role: 'student',
+      status: 'active',
+      publicLeaderboardOptIn: false,
+      photoUrl: safePhoto,
+      createdAt: tsNow(),
+      updatedAt: tsNow(),
+    });
+    batch.set(userRef, userDoc);
+  }
 
   const privateDoc: Record<string, unknown> = cleanPayload({
     uid: params.uid,
@@ -147,7 +270,6 @@ export async function completeStudentOnboarding(params: {
     updatedAt: tsNow(),
   });
 
-  batch.set(doc(db, 'users', params.uid), userDoc);
   batch.set(doc(db, 'users', params.uid, 'private', 'info'), privateDoc);
   batch.set(doc(db, 'studentProfiles', params.uid), profileDoc);
   batch.set(doc(db, 'tradingAccounts', accountId), accountDoc);
@@ -157,7 +279,7 @@ export async function completeStudentOnboarding(params: {
     action: 'student_profile_created',
     targetType: 'user',
     targetId: params.uid,
-    details: `Registered ${safeName} (${params.isMentorBootstrap ? 'mentor' : 'student'}) with initial account ${accountDoc.name}`,
+    details: `Registered ${safeName} (student) with initial account ${accountDoc.name}`,
   });
 
   try {
@@ -787,15 +909,8 @@ export async function updateTradeScreenshotNotes(params: {
 export async function deleteTradeScreenshot(screenshotId: string, imageUrl?: string) {
   try {
     await deleteDoc(doc(db, 'tradeScreenshots', screenshotId));
-    if (imageUrl && imageUrl.startsWith('/api/screenshots/')) {
-      const token = await auth.currentUser?.getIdToken().catch(() => null);
-      if (token) {
-        await fetch(imageUrl, {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` },
-        }).catch(() => {});
-      }
-    }
+    const { deleteStoredChartScreenshot } = await import('./storageService');
+    await deleteStoredChartScreenshot(imageUrl);
     await logAuditEvent({
       action: 'trade_screenshot_deleted',
       targetType: 'tradeScreenshot',

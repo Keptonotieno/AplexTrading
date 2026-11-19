@@ -21,6 +21,7 @@ interface FirebaseConfig {
   apiKey: string;
   projectId: string;
   firestoreDatabaseId: string;
+  storageBucket?: string;
 }
 
 const firebaseConfig: FirebaseConfig = JSON.parse(
@@ -569,28 +570,86 @@ async function startServer() {
 
     const body = req.body || {};
     const imageUrl = typeof body.imageUrl === 'string' ? body.imageUrl.trim() : '';
-    const match = imageUrl.match(/^\/api\/screenshots\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+\.(png|jpg|webp))$/);
-    if (!match) {
-      res.status(400).json({ error: 'Valid uploaded screenshot URL is required for chart review.' });
-      return;
+
+    let mimeType: 'image/png' | 'image/jpeg' | 'image/webp' = 'image/jpeg';
+    let imageBuffer: Buffer;
+
+    const localMatch = imageUrl.match(
+      /^\/api\/screenshots\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+\.(png|jpg|webp))$/
+    );
+
+    if (localMatch) {
+      const targetUid = localMatch[1];
+      const filename = path.basename(localMatch[2]);
+      const ext = localMatch[3];
+      if (user.uid !== targetUid && !user.isAdmin) {
+        res.status(403).json({ error: 'Access denied to another student’s chart screenshot.' });
+        return;
+      }
+
+      const filePath = path.join(UPLOADS_DIR, targetUid, filename);
+      if (!fs.existsSync(filePath)) {
+        res.status(404).json({ error: 'Screenshot file not found on server.' });
+        return;
+      }
+
+      mimeType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+      imageBuffer = fs.readFileSync(filePath);
+    } else {
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(imageUrl);
+      } catch {
+        res.status(400).json({ error: 'Valid uploaded screenshot URL is required for chart review.' });
+        return;
+      }
+
+      const allowedBuckets = new Set(
+        [
+          firebaseConfig.storageBucket,
+          `${firebaseConfig.projectId}.firebasestorage.app`,
+          `${firebaseConfig.projectId}.appspot.com`,
+        ].filter(Boolean)
+      );
+      const storageMatch = parsedUrl.pathname.match(/^\/v0\/b\/([^/]+)\/o\/(.+)$/);
+      if (
+        parsedUrl.protocol !== 'https:' ||
+        parsedUrl.hostname !== 'firebasestorage.googleapis.com' ||
+        !storageMatch ||
+        !allowedBuckets.has(storageMatch[1])
+      ) {
+        res.status(400).json({ error: 'Valid uploaded screenshot URL is required for chart review.' });
+        return;
+      }
+
+      const objectPath = decodeURIComponent(storageMatch[2]);
+      const pathMatch = objectPath.match(/^screenshots\/([a-zA-Z0-9_-]+)\/([a-zA-Z0-9_.-]+\.(png|jpg|webp))$/);
+      if (!pathMatch) {
+        res.status(400).json({ error: 'Invalid Firebase Storage screenshot path.' });
+        return;
+      }
+
+      const targetUid = pathMatch[1];
+      const ext = pathMatch[3];
+      if (user.uid !== targetUid && !user.isAdmin) {
+        res.status(403).json({ error: 'Access denied to another student’s chart screenshot.' });
+        return;
+      }
+
+      const imgResp = await fetch(parsedUrl.toString());
+      if (!imgResp.ok) {
+        res.status(404).json({ error: 'Screenshot object could not be retrieved from Firebase Storage.' });
+        return;
+      }
+      const arrBuf = await imgResp.arrayBuffer();
+      imageBuffer = Buffer.from(arrBuf);
+      mimeType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
+      if (imageBuffer.length === 0 || imageBuffer.length > 5 * 1024 * 1024 || !validateImageMagicBytes(imageBuffer, mimeType)) {
+        res.status(400).json({ error: 'Stored screenshot file is invalid or exceeds 5 MB.' });
+        return;
+      }
     }
 
-    const targetUid = match[1];
-    const filename = path.basename(match[2]);
-    const ext = match[3];
-    if (user.uid !== targetUid && !user.isAdmin) {
-      res.status(403).json({ error: 'Access denied to another student’s chart screenshot.' });
-      return;
-    }
-
-    const filePath = path.join(UPLOADS_DIR, targetUid, filename);
-    if (!fs.existsSync(filePath)) {
-      res.status(404).json({ error: 'Screenshot file not found on server.' });
-      return;
-    }
-
-    const mimeType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg';
-    const imageBuffer = fs.readFileSync(filePath);
     const base64Image = imageBuffer.toString('base64');
 
     const trade = body.trade && typeof body.trade === 'object' ? body.trade : {};
