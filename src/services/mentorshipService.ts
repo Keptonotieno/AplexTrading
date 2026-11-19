@@ -20,6 +20,8 @@ import {
   computePortfolioMetrics,
   DEFAULT_RISK_POLICY,
   DEFAULT_SYSTEM_SETTINGS,
+  ENROLLMENT_MAX_AMOUNT,
+  ENROLLMENT_MIN_AMOUNT,
   formatAccountTypeLabel,
   getMinimumInitialBalance,
   round2,
@@ -30,6 +32,7 @@ import type {
   AssignmentSubmission,
   ChallengeCycle,
   ChallengeParticipant,
+  DailyTradingSummary,
   LearningMaterial,
   MentorReview,
   NotificationItem,
@@ -1010,8 +1013,20 @@ export async function enrollInChallengeCycle(params: {
   userId: string;
   studentName: string;
   account: TradingAccount;
+  enrollmentAmount: number;
   metrics: ReturnType<typeof computePortfolioMetrics>;
 }) {
+  const amount = round2(Number(params.enrollmentAmount));
+  if (
+    !Number.isFinite(amount) ||
+    amount < ENROLLMENT_MIN_AMOUNT ||
+    amount > ENROLLMENT_MAX_AMOUNT
+  ) {
+    throw new Error(
+      `Enrollment amount must be between $${ENROLLMENT_MIN_AMOUNT} and $${ENROLLMENT_MAX_AMOUNT}.`
+    );
+  }
+
   const id = `${params.cycle.id}_${params.userId}`.slice(0, 120);
   const batch = writeBatch(db);
   batch.set(
@@ -1022,8 +1037,8 @@ export async function enrollInChallengeCycle(params: {
       userId: params.userId,
       studentName: truncateStr(params.studentName, 120) || 'Student',
       accountId: params.account.id,
-      openingBalance: params.account.currentBalance,
-      currentBalance: params.account.currentBalance,
+      openingBalance: amount,
+      currentBalance: amount,
       netPnl: 0,
       growthPercent: 0,
       tradesCount: 0,
@@ -1043,7 +1058,7 @@ export async function enrollInChallengeCycle(params: {
     action: 'challenge_enrolled',
     targetType: 'challengeCycle',
     targetId: params.cycle.id,
-    details: `Enrolled in challenge "${params.cycle.title}" with account "${params.account.name}"`,
+    details: `Enrolled in challenge "${params.cycle.title}" with ${params.account.currency} ${amount.toFixed(2)} using account "${params.account.name}"`,
   });
   try {
     await batch.commit();
@@ -1617,5 +1632,80 @@ export async function fetchTradeEditLogs(tradeId: string, userId: string) {
     return snap.docs.map((d) => d.data());
   } catch (err) {
     handleFirestoreError(err, OperationType.LIST, 'tradeEditLogs');
+  }
+}
+
+export async function saveDailyTradingSummary(params: {
+  existingSummary?: DailyTradingSummary;
+  userId: string;
+  accountId?: string;
+  summaryDate: string;
+  pair: string;
+  currency: TradingAccount['currency'];
+  pnl: number;
+  notes: string;
+}): Promise<string> {
+  const { existingSummary, userId, accountId, summaryDate, pair, currency, pnl, notes } = params;
+  const isEdit = Boolean(existingSummary);
+  const id = existingSummary ? existingSummary.id : generateSafeId('dsum');
+
+  const safePair = truncateStr(pair.trim().toUpperCase(), 20) || 'EURUSD';
+  const safeNotes = truncateStr(notes.trim(), 2000) || '';
+  const safeDate = summaryDate.trim().slice(0, 10);
+  const safePnl = round2(pnl);
+
+  const batch = writeBatch(db);
+  const payload = cleanPayload({
+    id,
+    userId,
+    accountId: accountId && accountId !== 'all' ? truncateStr(accountId, 128) : undefined,
+    summaryDate: safeDate,
+    pair: safePair,
+    currency,
+    pnl: safePnl,
+    notes: safeNotes,
+    createdAt: existingSummary ? existingSummary.createdAt : tsNow(),
+    updatedAt: tsNow(),
+  });
+
+  batch.set(doc(db, 'dailySummaries', id), payload);
+  queueAuditLogInBatch(batch, {
+    actorId: auth.currentUser?.uid || userId,
+    action: isEdit ? 'daily_summary_updated' : 'daily_summary_created',
+    targetType: 'dailySummary',
+    targetId: id,
+    details: `${isEdit ? 'Updated' : 'Logged'} daily summary for ${safePair} (${safeDate}): ${safePnl >= 0 ? '+' : ''}${safePnl} ${currency}`,
+    changes: isEdit && existingSummary
+      ? {
+          pair: { before: existingSummary.pair, after: safePair },
+          pnl: { before: existingSummary.pnl, after: safePnl },
+          summaryDate: { before: existingSummary.summaryDate, after: safeDate },
+        }
+      : undefined,
+  });
+
+  try {
+    await batch.commit();
+    return id;
+  } catch (err) {
+    handleFirestoreError(err, isEdit ? OperationType.UPDATE : OperationType.CREATE, `dailySummaries/${id}`);
+  }
+}
+
+export async function deleteDailyTradingSummary(summary: DailyTradingSummary, actorId: string): Promise<void> {
+  const batch = writeBatch(db);
+  batch.delete(doc(db, 'dailySummaries', summary.id));
+  queueAuditLogInBatch(batch, {
+    actorId,
+    action: 'daily_summary_deleted',
+    targetType: 'dailySummary',
+    targetId: summary.id,
+    details: `Removed daily summary for ${summary.pair} (${summary.summaryDate})`,
+  });
+
+  try {
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `dailySummaries/${summary.id}`);
   }
 }

@@ -241,6 +241,10 @@ export const DEFAULT_SYSTEM_SETTINGS: Omit<SystemSettings, 'updatedBy' | 'update
   minTradesForLeaderboard: 5,
 };
 
+export const ENROLLMENT_MIN_AMOUNT = 10;
+export const ENROLLMENT_MAX_AMOUNT = 1000;
+export const ENROLLMENT_AMOUNT_PRESETS = [10, 25, 50, 100, 250, 500, 1000] as const;
+
 export interface AccountTypeSpec {
   type: TradingAccount['accountType'];
   label: string;
@@ -253,11 +257,11 @@ export interface AccountTypeSpec {
 export const ACCOUNT_TYPE_SPECS: Record<TradingAccount['accountType'], AccountTypeSpec> = {
   standard: {
     type: 'standard',
-    label: 'Standard Account (Min $50)',
+    label: 'Standard Account (Min $10)',
     shortLabel: 'Standard',
-    minInitialBalance: 50,
+    minInitialBalance: 10,
     contractScale: 1,
-    description: 'Standard contract size (100,000 units/lot). Minimum starting balance of $50.',
+    description: 'Standard contract size (100,000 units/lot). Enroll from $10 to $1,000 or higher.',
   },
   cent: {
     type: 'cent',
@@ -277,27 +281,27 @@ export const ACCOUNT_TYPE_SPECS: Record<TradingAccount['accountType'], AccountTy
   },
   live: {
     type: 'live',
-    label: 'Live Standard (Min $50)',
+    label: 'Live Standard (Min $10)',
     shortLabel: 'Live Standard',
-    minInitialBalance: 50,
+    minInitialBalance: 10,
     contractScale: 1,
-    description: 'Live personal broker account. Minimum starting balance of $50.',
+    description: 'Live personal broker account. Enroll from $10 to $1,000 or higher.',
   },
   prop_challenge: {
     type: 'prop_challenge',
-    label: 'Prop Challenge (Min $50)',
+    label: 'Prop Challenge (Min $10)',
     shortLabel: 'Prop Challenge',
-    minInitialBalance: 50,
+    minInitialBalance: 10,
     contractScale: 1,
-    description: 'Evaluation account monitored against profit targets and drawdown caps. Minimum $50.',
+    description: 'Evaluation account monitored against profit targets and drawdown caps. Enroll from $10.',
   },
   funded: {
     type: 'funded',
-    label: 'Funded Account (Min $50)',
+    label: 'Funded Account (Min $10)',
     shortLabel: 'Funded',
-    minInitialBalance: 50,
+    minInitialBalance: 10,
     contractScale: 1,
-    description: 'Verified funded trading allocation. Minimum starting balance of $50.',
+    description: 'Verified funded trading allocation. Enroll from $10 to $1,000 or higher.',
   },
   custom: {
     type: 'custom',
@@ -310,7 +314,7 @@ export const ACCOUNT_TYPE_SPECS: Record<TradingAccount['accountType'], AccountTy
 };
 
 export function getMinimumInitialBalance(accountType: TradingAccount['accountType']): number {
-  return ACCOUNT_TYPE_SPECS[accountType]?.minInitialBalance ?? 50;
+  return ACCOUNT_TYPE_SPECS[accountType]?.minInitialBalance ?? 10;
 }
 
 export function getAccountContractScale(

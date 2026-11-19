@@ -30,6 +30,7 @@ import { formatFirestoreDate } from '../../lib/firestore-helpers';
 import {
   ACCOUNT_TYPE_SPECS,
   computeManualRecordInsights,
+  ENROLLMENT_AMOUNT_PRESETS,
   formatAccountTypeLabel,
   formatCurrency,
   formatPlainCurrency,
@@ -933,12 +934,12 @@ export const AnalyticsView: React.FC = () => {
                       }}
                       className="px-3 py-2 text-xs rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
                     >
-                      <option value="standard">Standard Account (Min $50)</option>
+                      <option value="standard">Standard Account (Min $10)</option>
                       <option value="cent">Cent Account (Min $10)</option>
                       <option value="demo">Demo Practice (Min $10)</option>
-                      <option value="live">Live Standard (Min $50)</option>
-                      <option value="prop_challenge">Prop Challenge (Min $50)</option>
-                      <option value="funded">Funded (Min $50)</option>
+                      <option value="live">Live Standard (Min $10)</option>
+                      <option value="prop_challenge">Prop Challenge (Min $10)</option>
+                      <option value="funded">Funded (Min $10)</option>
                       <option value="custom">Custom Account (Min $1)</option>
                     </select>
                     <select
@@ -994,25 +995,41 @@ export const AnalyticsView: React.FC = () => {
                       </>
                     )}
                     {!editingAccount && (
-                      <input
-                        type="number"
-                        min={getMinimumInitialBalance(accType)}
-                        step="0.01"
-                        required
-                        value={accBalance}
-                        onChange={(e) => setAccBalance(e.target.value)}
-                        placeholder={`Starting balance (Min $${getMinimumInitialBalance(accType)})`}
-                        className="px-3 py-2 text-xs font-mono rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
-                      />
+                      <div className="col-span-2 space-y-1.5">
+                        <input
+                          type="number"
+                          min={getMinimumInitialBalance(accType)}
+                          step="0.01"
+                          required
+                          value={accBalance}
+                          onChange={(e) => setAccBalance(e.target.value)}
+                          placeholder={`Starting balance (Min $${getMinimumInitialBalance(accType)} · $10–$1,000+)`}
+                          className="w-full px-3 py-2 text-xs font-mono tabular-nums rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
+                        />
+                        <div className="flex flex-wrap items-center gap-1">
+                          {ENROLLMENT_AMOUNT_PRESETS.map((preset) => (
+                            <button
+                              key={preset}
+                              type="button"
+                              onClick={() => setAccBalance(String(preset))}
+                              className={`px-2 py-0.5 text-[11px] font-mono tabular-nums rounded border transition-colors ${
+                                Number(accBalance) === preset
+                                  ? 'bg-blue-600 text-white border-blue-600'
+                                  : 'bg-white dark:bg-[#0F172A] text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-slate-400'
+                              }`}
+                            >
+                              ${preset}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     )}
                     <input
                       type="text"
                       value={accBroker}
                       onChange={(e) => setAccBroker(e.target.value)}
                       placeholder="Broker name (descriptive)"
-                      className={`${
-                        editingAccount ? 'col-span-2' : 'col-span-1'
-                      } px-3 py-2 text-xs rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800`}
+                      className="col-span-2 px-3 py-2 text-xs rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
                     />
                   </div>
                   <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">

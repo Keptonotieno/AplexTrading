@@ -30,6 +30,7 @@ import { auth, authPersistenceReady } from '../lib/firebase';
 import { formatFirebaseAuthError, verifyAdminSession } from '../lib/authHelpers';
 import {
   ACCOUNT_TYPE_SPECS,
+  ENROLLMENT_AMOUNT_PRESETS,
   formatAccountTypeLabel,
   getMinimumInitialBalance,
   INSTRUMENT_SPECS,
@@ -225,8 +226,13 @@ export const AuthPortal: React.FC = () => {
       await authPersistenceReady;
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
       await updateProfile(cred.user, { displayName: fullName.trim() });
-      await sendEmailVerification(cred.user);
-      setNotice('Verification link sent to your email address. Please verify your email and click Refresh Status.');
+      try {
+        await sendEmailVerification(cred.user);
+        setNotice('Verification link sent to your email address. Please verify your email and click Continue.');
+      } catch (verifyErr: unknown) {
+        const formatted = formatFirebaseAuthError(verifyErr, 'email-register');
+        setError(`Account created, but verification email could not be sent yet: ${formatted.message}`);
+      }
     } catch (err: unknown) {
       const formatted = formatFirebaseAuthError(err, 'email-register');
       setError(formatted.message);
@@ -351,13 +357,22 @@ export const AuthPortal: React.FC = () => {
               disabled={busy}
               onClick={async () => {
                 setBusy(true);
-                await firebaseUser.reload();
-                if (auth.currentUser?.emailVerified) {
-                  window.location.reload();
-                } else {
-                  setError('Email is not verified yet. Please check your inbox.');
+                setError(null);
+                setNotice(null);
+                try {
+                  const current = auth.currentUser || firebaseUser;
+                  await current.reload();
+                  if (auth.currentUser?.emailVerified) {
+                    await auth.currentUser.getIdToken(true);
+                  } else {
+                    setError('Email is not verified yet. Open the verification link in your inbox (check spam too), then click Continue.');
+                  }
+                } catch (e: unknown) {
+                  const formatted = formatFirebaseAuthError(e, 'email-signin');
+                  setError(formatted.message);
+                } finally {
+                  setBusy(false);
                 }
-                setBusy(false);
               }}
               className="w-full h-11 flex items-center justify-center gap-2 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold active:scale-[0.99] transition-all duration-150 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-blue-600/30"
             >
@@ -369,13 +384,16 @@ export const AuthPortal: React.FC = () => {
               disabled={busy}
               onClick={async () => {
                 setBusy(true);
+                setError(null);
                 try {
-                  await sendEmailVerification(firebaseUser);
-                  setNotice('Verification email resent.');
+                  await sendEmailVerification(auth.currentUser || firebaseUser);
+                  setNotice('Verification email resent. Check your inbox and spam folder.');
                 } catch (e: unknown) {
-                  setError(e instanceof Error ? e.message : 'Unable to resend email.');
+                  const formatted = formatFirebaseAuthError(e, 'email-register');
+                  setError(formatted.message);
+                } finally {
+                  setBusy(false);
                 }
-                setBusy(false);
               }}
               className="w-full h-10 px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
             >
@@ -535,12 +553,12 @@ export const AuthPortal: React.FC = () => {
                     onChange={(e) => setInitialAccountType(e.target.value as TradingAccount['accountType'])}
                     className="w-full px-3.5 py-2 text-sm rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
                   >
-                    <option value="standard">Standard Account (Min $50)</option>
+                    <option value="standard">Standard Account (Min $10)</option>
                     <option value="cent">Cent Account (Min $10)</option>
                     <option value="demo">Demo Practice (Min $10)</option>
-                    <option value="live">Live Standard (Min $50)</option>
-                    <option value="prop_challenge">Prop Challenge (Min $50)</option>
-                    <option value="funded">Funded (Min $50)</option>
+                    <option value="live">Live Standard (Min $10)</option>
+                    <option value="prop_challenge">Prop Challenge (Min $10)</option>
+                    <option value="funded">Funded (Min $10)</option>
                     <option value="custom">Custom Account (Min $1)</option>
                   </select>
                 </div>
@@ -614,7 +632,7 @@ export const AuthPortal: React.FC = () => {
                 )}
                 <div className="md:col-span-2">
                   <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1.5">
-                    Initial Balance * (Min ${getMinimumInitialBalance(initialAccountType)})
+                    Initial Balance * (Min ${getMinimumInitialBalance(initialAccountType)} · $10–$1,000+ supported)
                   </label>
                   <input
                     type="number"
@@ -623,10 +641,26 @@ export const AuthPortal: React.FC = () => {
                     required
                     value={initialBalance}
                     onChange={(e) => setInitialBalance(e.target.value)}
-                    placeholder={`Minimum $${getMinimumInitialBalance(initialAccountType)}.00 or any higher amount`}
+                    placeholder={`Enter any amount from $${getMinimumInitialBalance(initialAccountType)} to $1,000+`}
                     className="w-full px-3.5 py-2 text-sm font-mono tabular-nums rounded-lg bg-slate-50 dark:bg-[#0B111E] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white"
                   />
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    {ENROLLMENT_AMOUNT_PRESETS.map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setInitialBalance(String(preset))}
+                        className={`px-2 py-0.5 text-[11px] font-mono tabular-nums rounded border transition-colors ${
+                          Number(initialBalance) === preset
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-slate-50 dark:bg-[#0B111E] text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-slate-400'
+                        }`}
+                      >
+                        ${preset}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5">
                     {ACCOUNT_TYPE_SPECS[initialAccountType].description}
                   </p>
                 </div>

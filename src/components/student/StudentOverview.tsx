@@ -32,6 +32,7 @@ import {
   formatPlainCurrency,
 } from '../../lib/forexCalculations';
 import type { StudentTab } from '../AppShell';
+import { DailyTradingSummaryCard } from './DailyTradingSummaryCard';
 
 interface Props {
   onNavigate: (tab: StudentTab) => void;
@@ -309,6 +310,9 @@ export const StudentOverview: React.FC<Props> = ({ onNavigate, onOpenNewTrade })
           </div>
         </div>
       </section>
+
+      {/* Daily Trading Summary (Direct P&L, Pair & Notes Input) */}
+      <DailyTradingSummaryCard />
 
       {/* Middle Split: Performance Overview (8 cols) + Quick Actions (4 cols) */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">

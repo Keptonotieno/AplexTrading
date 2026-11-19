@@ -499,6 +499,21 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidDailySummary(data, summaryId) {
+      return data.keys().hasAll(['id', 'userId', 'summaryDate', 'pair', 'currency', 'pnl', 'notes', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'userId', 'accountId', 'summaryDate', 'pair', 'currency', 'pnl', 'notes', 'createdAt', 'updatedAt'])
+        && isValidId(data.id) && data.id == summaryId
+        && isValidId(data.userId)
+        && (!('accountId' in data) || isValidId(data.accountId))
+        && data.summaryDate is string && data.summaryDate.size() == 10 && data.summaryDate.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && data.pair is string && data.pair.size() >= 2 && data.pair.size() <= 20
+        && data.currency in ['USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF']
+        && data.pnl is number && data.pnl >= -100000000 && data.pnl <= 100000000
+        && data.notes is string && data.notes.size() >= 1 && data.notes.size() <= 2000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // =========================================================================
     // Collection Rules
     // =========================================================================
@@ -590,8 +605,7 @@ service cloud.firestore {
         && isValidTradingAccount(incoming(), accountId)
         && incoming().userId == request.auth.uid
         && (
-          (incoming().accountType in ['cent', 'demo'] && incoming().initialBalance >= 10) ||
-          (incoming().accountType in ['standard', 'live', 'prop_challenge', 'funded'] && incoming().initialBalance >= 50) ||
+          (incoming().accountType in ['cent', 'demo', 'standard', 'live', 'prop_challenge', 'funded'] && incoming().initialBalance >= 10) ||
           (incoming().accountType == 'custom' && incoming().initialBalance >= 1)
         )
         && incoming().createdAt == request.time
@@ -790,6 +804,8 @@ service cloud.firestore {
       allow create: if isVerified() && isValidId(participantId)
         && isValidChallengeParticipant(incoming(), participantId)
         && (incoming().userId == request.auth.uid || isAdmin())
+        && incoming().openingBalance >= 10
+        && incoming().openingBalance <= 1000
         && incoming().joinedAt == request.time
         && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/challengeCycles/$(incoming().cycleId));
@@ -952,6 +968,39 @@ service cloud.firestore {
         && isValidSystemSettings(incoming(), settingId)
         && incoming().updatedAt == request.time;
       allow delete: if isAdmin() && isValidId(settingId);
+    }
+
+    // /dailySummaries/{summaryId}
+    match /dailySummaries/{summaryId} {
+      allow get: if isSignedIn() && isValidId(summaryId) && (existing().userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (existing().userId == request.auth.uid || isBootstrappedAdminEmail());
+      allow create: if isVerified() && isValidId(summaryId)
+        && isValidDailySummary(incoming(), summaryId)
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (!('accountId' in incoming()) || (
+          exists(/databases/$(database)/documents/tradingAccounts/$(incoming().accountId)) &&
+          get(/databases/$(database)/documents/tradingAccounts/$(incoming().accountId)).data.userId == request.auth.uid
+        ));
+      allow update: if isVerified() && isValidId(summaryId)
+        && isValidDailySummary(incoming(), summaryId)
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (!('accountId' in incoming()) || (
+          exists(/databases/$(database)/documents/tradingAccounts/$(incoming().accountId)) &&
+          get(/databases/$(database)/documents/tradingAccounts/$(incoming().accountId)).data.userId == existing().userId
+        ))
+        && (
+          isAdmin() ||
+          (
+            existing().userId == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['accountId', 'summaryDate', 'pair', 'currency', 'pnl', 'notes', 'updatedAt'])
+          )
+        );
+      allow delete: if isVerified() && isValidId(summaryId) && (existing().userId == request.auth.uid || isAdmin());
     }
   }
 }

@@ -490,6 +490,24 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "programmeName", "challengeDefaultDays", "weightRiskManagement", "weightDiscipline", "weightConsistency", "weightProfitability", "weightJournalCompletion", "requireMentorApproval", "minTradesForLeaderboard", "updatedBy", "updatedAt"]
+    },
+    "DailyTradingSummary": {
+      "title": "DailyTradingSummary",
+      "description": "Quick daily trading summary entry logged directly from the student dashboard with P&L, pair, and trade notes.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "accountId": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "summaryDate": { "type": "string", "minLength": 10, "maxLength": 10, "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+        "pair": { "type": "string", "minLength": 2, "maxLength": 20 },
+        "currency": { "type": "string", "enum": ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF"] },
+        "pnl": { "type": "number" },
+        "notes": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "summaryDate", "pair", "currency", "pnl", "notes", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -588,6 +606,10 @@
     "/systemSettings/{settingId}": {
       "schema": { "$ref": "#/entities/SystemSettings" },
       "description": "Platform configuration and scoring methodology weights."
+    },
+    "/dailySummaries/{summaryId}": {
+      "schema": { "$ref": "#/entities/DailyTradingSummary" },
+      "description": "Student daily trading summaries capturing P&L, trading pair, and session notes directly from the dashboard."
     }
   }
 }

@@ -64,7 +64,7 @@ export function formatFirebaseAuthError(
       return {
         code,
         message:
-          'Invalid email or password, or no matching Email/Password user exists yet. Check your credentials or register on the Register tab.',
+          'Invalid email or password, or this email uses Google Sign-In. Check your credentials, register on the Register tab, or click Continue with Google.',
         helpUrl: AUTH_USERS_URL,
       };
     case 'auth/email-already-in-use':

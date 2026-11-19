@@ -391,3 +391,16 @@ export interface SystemSettings {
   updatedBy: string;
   updatedAt?: unknown;
 }
+
+export interface DailyTradingSummary {
+  id: string;
+  userId: string;
+  accountId?: string;
+  summaryDate: string;
+  pair: string;
+  currency: TradingAccount['currency'];
+  pnl: number;
+  notes: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}

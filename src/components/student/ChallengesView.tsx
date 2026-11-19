@@ -13,6 +13,9 @@ import {
 import { useMentorship } from '../../context/MentorshipContext';
 import {
   computeChallengeProgress,
+  ENROLLMENT_AMOUNT_PRESETS,
+  ENROLLMENT_MAX_AMOUNT,
+  ENROLLMENT_MIN_AMOUNT,
   formatCurrency,
   formatPlainCurrency,
 } from '../../lib/forexCalculations';
@@ -35,6 +38,13 @@ export const ChallengesView: React.FC = () => {
   const [selectedAccountId, setSelectedAccountId] = useState(
     activeAccount?.id || tradingAccounts[0]?.id || ''
   );
+  const defaultEnrollAmount = useMemo(() => {
+    const acc = tradingAccounts.find((a) => a.id === selectedAccountId) || activeAccount || tradingAccounts[0];
+    const bal = acc?.currentBalance ?? 100;
+    return String(Math.min(ENROLLMENT_MAX_AMOUNT, Math.max(ENROLLMENT_MIN_AMOUNT, bal)));
+  }, [tradingAccounts, selectedAccountId, activeAccount]);
+  const [enrollmentAmount, setEnrollmentAmount] = useState<string>(defaultEnrollAmount);
+  const [enrollError, setEnrollError] = useState<string | null>(null);
   const [selectedCycleId, setSelectedCycleId] = useState<string>('');
   const [enrollingId, setEnrollingId] = useState<string | null>(null);
 
@@ -76,6 +86,19 @@ export const ChallengesView: React.FC = () => {
       tradingAccounts.find((a) => a.id === selectedAccountId) || tradingAccounts[0];
     if (!firebaseUser || !studentProfile || !cycle || !acc) return;
 
+    const parsedAmount = Number(enrollmentAmount);
+    if (
+      !Number.isFinite(parsedAmount) ||
+      parsedAmount < ENROLLMENT_MIN_AMOUNT ||
+      parsedAmount > ENROLLMENT_MAX_AMOUNT
+    ) {
+      setEnrollError(
+        `Enrollment amount must be between $${ENROLLMENT_MIN_AMOUNT} and $${ENROLLMENT_MAX_AMOUNT.toLocaleString()}.`
+      );
+      return;
+    }
+
+    setEnrollError(null);
     setEnrollingId(cycleId);
     try {
       await enrollInChallengeCycle({
@@ -83,9 +106,12 @@ export const ChallengesView: React.FC = () => {
         userId: firebaseUser.uid,
         studentName: studentProfile.fullName,
         account: acc,
+        enrollmentAmount: parsedAmount,
         metrics,
       });
       setSelectedCycleId(cycleId);
+    } catch (err) {
+      setEnrollError(err instanceof Error ? err.message : 'Unable to enroll in challenge cycle.');
     } finally {
       setEnrollingId(null);
     }
@@ -101,31 +127,99 @@ export const ChallengesView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-xl md:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
             Recurring Trading Challenges
           </h1>
           <p className="text-xs md:text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Automated prop-style challenge monitoring with target balance, drawdown buffers, and daily loss tracking
+            Automated prop-style challenge monitoring · Enroll with any amount from $10 to $1,000
           </p>
         </div>
 
         {tradingAccounts.length > 0 && (
-          <select
-            aria-label="Account for challenge enrollment"
-            value={selectedAccountId || tradingAccounts[0]?.id}
-            onChange={(e) => setSelectedAccountId(e.target.value)}
-            className="px-3.5 py-2 text-xs rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
-          >
-            {tradingAccounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                Enroll with: {a.name} ({formatPlainCurrency(a.currentBalance, a.currency)})
-              </option>
-            ))}
-          </select>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <select
+              aria-label="Account for challenge enrollment"
+              value={selectedAccountId || tradingAccounts[0]?.id}
+              onChange={(e) => {
+                const nextId = e.target.value;
+                setSelectedAccountId(nextId);
+                const nextAcc = tradingAccounts.find((a) => a.id === nextId);
+                if (nextAcc) {
+                  setEnrollmentAmount(
+                    String(
+                      Math.min(
+                        ENROLLMENT_MAX_AMOUNT,
+                        Math.max(ENROLLMENT_MIN_AMOUNT, nextAcc.currentBalance)
+                      )
+                    )
+                  );
+                }
+                setEnrollError(null);
+              }}
+              className="h-9 px-3 text-xs rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800"
+            >
+              {tradingAccounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  Account: {a.name} ({formatPlainCurrency(a.currentBalance, a.currency)})
+                </option>
+              ))}
+            </select>
+
+            <div className="flex items-center gap-1.5">
+              <label
+                htmlFor="challenge-enroll-amount"
+                className="text-xs font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap"
+              >
+                Enroll ($10–$1,000):
+              </label>
+              <input
+                id="challenge-enroll-amount"
+                type="number"
+                min={ENROLLMENT_MIN_AMOUNT}
+                max={ENROLLMENT_MAX_AMOUNT}
+                step="0.01"
+                value={enrollmentAmount}
+                onChange={(e) => {
+                  setEnrollmentAmount(e.target.value);
+                  setEnrollError(null);
+                }}
+                className="w-28 h-9 px-3 text-xs font-mono tabular-nums rounded-lg bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white focus:outline-none focus-visible:border-blue-600"
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1">
+              {ENROLLMENT_AMOUNT_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => {
+                    setEnrollmentAmount(String(preset));
+                    setEnrollError(null);
+                  }}
+                  className={`px-2 py-1 text-[11px] font-mono tabular-nums rounded-md border transition-colors whitespace-nowrap ${
+                    Number(enrollmentAmount) === preset
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white dark:bg-[#0F172A] text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                  }`}
+                >
+                  ${preset}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
       </div>
+
+      {enrollError && (
+        <div
+          role="alert"
+          className="p-3 rounded-lg bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-xs text-red-700 dark:text-red-400"
+        >
+          {enrollError}
+        </div>
+      )}
 
       {challengeCycles.length === 0 ? (
         <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-xl p-12 text-center space-y-2.5">
@@ -455,7 +549,9 @@ export const ChallengesView: React.FC = () => {
                         }}
                         className="w-full py-2 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium"
                       >
-                        {enrollingId === cycle.id ? 'Joining Cycle...' : 'Join This Challenge Cycle'}
+                        {enrollingId === cycle.id
+                          ? 'Joining Cycle...'
+                          : `Join This Challenge ($${Number.isFinite(Number(enrollmentAmount)) ? Number(enrollmentAmount).toFixed(2) : '10.00'})`}
                       </button>
                     )
                   )}

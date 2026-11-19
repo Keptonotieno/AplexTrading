@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { getRedirectResult, onAuthStateChanged, signOut, type User } from 'firebase/auth';
+import { getRedirectResult, onIdTokenChanged, signOut, type User } from 'firebase/auth';
 import {
   collection,
   doc,
@@ -36,6 +36,7 @@ import type {
   AuditLog,
   ChallengeCycle,
   ChallengeParticipant,
+  DailyTradingSummary,
   LeaderboardEntry,
   LearningMaterial,
   MentorReview,
@@ -86,6 +87,7 @@ interface MentorshipContextValue {
   myChallenges: ChallengeParticipant[];
   myMentorReviews: MentorReview[];
   myAssignments: AssignmentSubmission[];
+  dailySummaries: DailyTradingSummary[];
   notifications: NotificationItem[];
   unreadNotificationsCount: number;
 
@@ -114,6 +116,7 @@ interface MentorshipContextValue {
   adminAllParticipants: ChallengeParticipant[];
   adminAllAssignments: AssignmentSubmission[];
   adminAllMentorReviews: MentorReview[];
+  adminAllDailySummaries: DailyTradingSummary[];
   adminAuditLogs: AuditLog[];
 
   logout: () => Promise<void>;
@@ -168,6 +171,7 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
   const [myChallenges, setMyChallenges] = useState<ChallengeParticipant[]>([]);
   const [myMentorReviews, setMyMentorReviews] = useState<MentorReview[]>([]);
   const [myAssignments, setMyAssignments] = useState<AssignmentSubmission[]>([]);
+  const [dailySummaries, setDailySummaries] = useState<DailyTradingSummary[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   // Shared programme state
@@ -198,6 +202,7 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
   const [adminAllParticipants, setAdminAllParticipants] = useState<ChallengeParticipant[]>([]);
   const [adminAllAssignments, setAdminAllAssignments] = useState<AssignmentSubmission[]>([]);
   const [adminAllMentorReviews, setAdminAllMentorReviews] = useState<MentorReview[]>([]);
+  const [adminAllDailySummaries, setAdminAllDailySummaries] = useState<DailyTradingSummary[]>([]);
   const [adminAuditLogs, setAdminAuditLogs] = useState<AuditLog[]>([]);
   const autoRoutedAdminUidRef = useRef<string | null>(null);
   const syncedProfileUidRef = useRef<string | null>(null);
@@ -237,10 +242,13 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
     };
   }, []);
 
-  // Auth listener
+  const [authRevision, setAuthRevision] = useState(0);
+
+  // Auth & ID token listener (updates immediately when emailVerified flips after verification)
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
+    const unsub = onIdTokenChanged(auth, (user) => {
       setFirebaseUser(user);
+      setAuthRevision((v) => v + 1);
       setAuthReady(true);
       if (!user) {
         setUserAccount(null);
@@ -256,6 +264,7 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
         setMyChallenges([]);
         setMyMentorReviews([]);
         setMyAssignments([]);
+        setDailySummaries([]);
         setNotifications([]);
         setIsAdminDoc(false);
         setWorkspaceModeState('student');
@@ -263,6 +272,10 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
         syncedProfileUidRef.current = null;
         setUserAccountChecked(true);
         setStudentProfileChecked(true);
+        setLoadingData(false);
+      } else if (!user.emailVerified) {
+        setUserAccountChecked(false);
+        setStudentProfileChecked(false);
         setLoadingData(false);
       } else {
         setUserAccountChecked(false);
@@ -302,7 +315,7 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
     syncAuthenticatedUserProfile(firebaseUser).catch((err) => {
       console.warn('Authenticated profile sync warning:', err instanceof Error ? err.message : err);
     });
-  }, [authReady, firebaseUser]);
+  }, [authReady, firebaseUser, authRevision]);
 
   // Bootstrap admin defaults when verified admin signs in, and auto-enter Admin Console on verified admin sign-in
   useEffect(() => {
@@ -313,7 +326,7 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
         firebaseUser.displayName || 'Lead Mentor'
       ).catch(() => {});
     }
-  }, [authReady, firebaseUser]);
+  }, [authReady, firebaseUser, authRevision]);
 
   useEffect(() => {
     if (!authReady || !firebaseUser) return;
@@ -340,10 +353,17 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
 
   // Core user & student listeners (attached only when authReady && firebaseUser && emailVerified)
   useEffect(() => {
-    if (!authReady || !firebaseUser) return;
+    if (!authReady || !firebaseUser || !firebaseUser.emailVerified) return;
 
     const uid = firebaseUser.uid;
     const unsubs: Array<() => void> = [];
+    let resolvedUserDoc = false;
+    let resolvedStudentDoc = false;
+    const finishInitialLoad = () => {
+      if (resolvedUserDoc && resolvedStudentDoc) {
+        setLoadingData(false);
+      }
+    };
 
     unsubs.push(
       onSnapshot(
@@ -359,6 +379,8 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
         (snap) => {
           setUserAccount(snap.exists() ? (snap.data() as UserAccount) : null);
           setUserAccountChecked(true);
+          resolvedUserDoc = true;
+          finishInitialLoad();
         },
         (err) => handleFirestoreError(err, OperationType.GET, `users/${uid}`)
       )
@@ -378,7 +400,8 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
         (snap) => {
           setStudentProfile(snap.exists() ? (snap.data() as StudentProfile) : null);
           setStudentProfileChecked(true);
-          setLoadingData(false);
+          resolvedStudentDoc = true;
+          finishInitialLoad();
         },
         (err) => handleFirestoreError(err, OperationType.GET, `studentProfiles/${uid}`)
       )
@@ -486,6 +509,22 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
 
     unsubs.push(
       onSnapshot(
+        query(collection(db, 'dailySummaries'), where('userId', '==', uid)),
+        (snap) => {
+          const list = snap.docs.map((d) => d.data() as DailyTradingSummary);
+          list.sort((a, b) => {
+            const dateDiff = b.summaryDate.localeCompare(a.summaryDate);
+            if (dateDiff !== 0) return dateDiff;
+            return toIsoString(b.createdAt).localeCompare(toIsoString(a.createdAt));
+          });
+          setDailySummaries(list);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'dailySummaries')
+      )
+    );
+
+    unsubs.push(
+      onSnapshot(
         query(collection(db, 'notifications'), where('recipientId', '==', uid)),
         (snap) => setNotifications(snap.docs.map((d) => d.data() as NotificationItem)),
         (err) => handleFirestoreError(err, OperationType.LIST, 'notifications')
@@ -556,7 +595,7 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
     return () => {
       unsubs.forEach((u) => u());
     };
-  }, [authReady, firebaseUser, isVerifiedAdmin]);
+  }, [authReady, firebaseUser?.uid, firebaseUser?.emailVerified, isVerifiedAdmin, authRevision]);
 
   // Admin-only collection listeners (strictly guarded by isVerifiedAdmin && workspaceMode === 'admin')
   useEffect(() => {
@@ -659,6 +698,17 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
         collection(db, 'mentorReviews'),
         (snap) => setAdminAllMentorReviews(snap.docs.map((d) => d.data() as MentorReview)),
         (err) => handleFirestoreError(err, OperationType.LIST, 'mentorReviews')
+      )
+    );
+    unsubs.push(
+      onSnapshot(
+        collection(db, 'dailySummaries'),
+        (snap) => {
+          const list = snap.docs.map((d) => d.data() as DailyTradingSummary);
+          list.sort((a, b) => b.summaryDate.localeCompare(a.summaryDate));
+          setAdminAllDailySummaries(list);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'dailySummaries')
       )
     );
     unsubs.push(
@@ -810,6 +860,7 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
         myChallenges,
         myMentorReviews,
         myAssignments,
+        dailySummaries,
         notifications,
         unreadNotificationsCount,
         riskPolicy,
@@ -832,6 +883,7 @@ export function MentorshipProvider({ children }: { children: React.ReactNode }) 
         adminAllParticipants,
         adminAllAssignments,
         adminAllMentorReviews,
+        adminAllDailySummaries,
         adminAuditLogs,
         logout,
       }}
